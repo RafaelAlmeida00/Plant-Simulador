@@ -1,0 +1,449 @@
+openapi: 3.0.0
+info:
+  title: Plant Simulador API
+  version: 1.0.0
+  description: |
+    API para simulação e monitoramento de uma planta industrial, incluindo eventos, buffers, paradas, snapshots e saúde do sistema.
+servers:
+  - url: http://localhost:3000
+paths:
+  /api/events:
+    get:
+      summary: Lista todos os eventos
+      parameters:
+        - in: query
+          name: car_id
+          schema:
+            type: string
+        - in: query
+          name: shop
+          schema:
+            type: string
+        - in: query
+          name: line
+          schema:
+            type: string
+        - in: query
+          name: station
+          schema:
+            type: string
+        - in: query
+          name: event_type
+          schema:
+            type: string
+        - in: query
+          name: start_time
+          schema:
+            type: integer
+        - in: query
+          name: end_time
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de eventos
+    post:
+      summary: Cria um novo evento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarEvent'
+      responses:
+        '201':
+          description: Evento criado
+  /api/events/{id}:
+    get:
+      summary: Busca evento por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Evento encontrado
+        '404':
+          description: Evento não encontrado
+    put:
+      summary: Atualiza evento por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarEvent'
+      responses:
+        '200':
+          description: Evento atualizado
+        '404':
+          description: Evento não encontrado
+    delete:
+      summary: Remove evento por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Evento removido
+        '404':
+          description: Evento não encontrado
+  /api/stops:
+    get:
+      summary: Lista todas as paradas
+      parameters:
+        - in: query
+          name: stop_id
+          schema:
+            type: string
+        - in: query
+          name: shop
+          schema:
+            type: string
+        - in: query
+          name: line
+          schema:
+            type: string
+        - in: query
+          name: station
+          schema:
+            type: string
+        - in: query
+          name: severity
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: type
+          schema:
+            type: string
+        - in: query
+          name: start_time
+          schema:
+            type: integer
+        - in: query
+          name: end_time
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de paradas
+    post:
+      summary: Cria uma nova parada
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopEvent'
+      responses:
+        '201':
+          description: Parada criada
+  /api/stops/{id}:
+    get:
+      summary: Busca parada por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Parada encontrada
+        '404':
+          description: Parada não encontrada
+    put:
+      summary: Atualiza parada por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopEvent'
+      responses:
+        '200':
+          description: Parada atualizada
+        '404':
+          description: Parada não encontrada
+    delete:
+      summary: Remove parada por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Parada removida
+        '404':
+          description: Parada não encontrada
+  /api/buffers:
+    get:
+      summary: Lista todos os estados de buffer
+      parameters:
+        - in: query
+          name: buffer_id
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: type
+          schema:
+            type: string
+        - in: query
+          name: from_location
+          schema:
+            type: string
+        - in: query
+          name: to_location
+          schema:
+            type: string
+        - in: query
+          name: start_time
+          schema:
+            type: integer
+        - in: query
+          name: end_time
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de estados de buffer
+    post:
+      summary: Cria um novo estado de buffer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BufferState'
+      responses:
+        '201':
+          description: Estado de buffer criado
+  /api/buffers/{id}:
+    get:
+      summary: Busca estado de buffer por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Estado de buffer encontrado
+        '404':
+          description: Estado de buffer não encontrado
+    put:
+      summary: Atualiza estado de buffer por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BufferState'
+      responses:
+        '200':
+          description: Estado de buffer atualizado
+        '404':
+          description: Estado de buffer não encontrado
+    delete:
+      summary: Remove estado de buffer por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Estado de buffer removido
+        '404':
+          description: Estado de buffer não encontrado
+  /api/plantstate:
+    get:
+      summary: Lista todos os snapshots da planta
+      parameters:
+        - in: query
+          name: start_time
+          schema:
+            type: integer
+        - in: query
+          name: end_time
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de snapshots
+    post:
+      summary: Cria um novo snapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlantSnapshot'
+      responses:
+        '201':
+          description: Snapshot criado
+  /api/plantstate/{id}:
+    get:
+      summary: Busca snapshot por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Snapshot encontrado
+        '404':
+          description: Snapshot não encontrado
+    put:
+      summary: Atualiza snapshot por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlantSnapshot'
+      responses:
+        '200':
+          description: Snapshot atualizado
+        '404':
+          description: Snapshot não encontrado
+    delete:
+      summary: Remove snapshot por ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Snapshot removido
+        '404':
+          description: Snapshot não encontrado
+  /api/health:
+    get:
+      summary: Verifica saúde do sistema
+      responses:
+        '200':
+          description: Status de saúde
+  /api/health/detailed:
+    get:
+      summary: Verifica saúde detalhada do sistema
+      responses:
+        '200':
+          description: Status detalhado
+components:
+  schemas:
+    CarEvent:
+      type: object
+      properties:
+        car_id:
+          type: string
+        event_type:
+          type: string
+        shop:
+          type: string
+        line:
+          type: string
+        station:
+          type: string
+        timestamp:
+          type: integer
+    StopEvent:
+      type: object
+      properties:
+        stop_id:
+          type: string
+        shop:
+          type: string
+        line:
+          type: string
+        station:
+          type: string
+        start_time:
+          type: integer
+        end_time:
+          type: integer
+        status:
+          type: string
+        severity:
+          type: string
+        type:
+          type: string
+    BufferState:
+      type: object
+      properties:
+        buffer_id:
+          type: string
+        from_location:
+          type: string
+        to_location:
+          type: string
+        capacity:
+          type: integer
+        current_count:
+          type: integer
+        status:
+          type: string
+        type:
+          type: string
+        timestamp:
+          type: integer
+    PlantSnapshot:
+      type: object
+      properties:
+        timestamp:
+          type: integer
+        total_stations:
+          type: integer
+        total_occupied:
+          type: integer
+        total_free:
+          type: integer
+        total_stopped:
+          type: integer
+        snapshot_data:
+          type: object
