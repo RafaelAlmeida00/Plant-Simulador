@@ -37,7 +37,7 @@ export class DatabaseConfigFactory {
     private static getTestConfig(): IDatabaseConfig {
         return {
             type: 'sqlite',
-            connectionString: './simulation_output/database.db'
+            connectionString: './src/adapters/database/test/database.db'
         };
     }
 
