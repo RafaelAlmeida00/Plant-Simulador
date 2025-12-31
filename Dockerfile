@@ -30,6 +30,10 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
 
+# Garante que os arquivos de documentação estejam disponíveis em produção
+COPY src/adapters/http/swagger.yaml ./dist/adapters/http/swagger.yaml
+COPY src/adapters/http/asyncapi.yaml ./dist/adapters/http/asyncapi.yaml
+
 RUN mkdir -p simulation_output
 
 EXPOSE 3000
