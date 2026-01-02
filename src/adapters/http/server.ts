@@ -20,7 +20,7 @@ export class Server {
     constructor() {
         this.app = express();
         this.httpServer = createServer(this.app);
-        this.port = process.env.PORT || 3000;
+        this.port = process.env.PORT || 3001;
         this.initializeMiddlewares();
         this.initializeRoutes();
         this.initializeWebSocket();

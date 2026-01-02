@@ -37,6 +37,7 @@ export interface IStation {
   finishStop: number;
   stopId?: string;
   isFirstCar: boolean;
+  taktSg: number;
 }
 
 export class Station implements IStation {
@@ -47,6 +48,7 @@ export class Station implements IStation {
   public line: string;
   public index: number;
   public taktMn: number;
+  public taktSg: number;
   public isFirstStation: boolean;
   public isLastStation: boolean;
   public occupied = false;
@@ -76,6 +78,7 @@ export class Station implements IStation {
     this.finishStop = config.finishStop;
     this.stopId = config.stopId;
     this.isFirstCar = true;
+    this.taktSg = config.taktSg;
   }
 
 }

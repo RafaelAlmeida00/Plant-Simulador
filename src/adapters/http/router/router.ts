@@ -10,6 +10,9 @@ import StopsController from '../controllers/StopsController';
 import BuffersController from '../controllers/BuffersController';
 import PlantStateController from '../controllers/PlantStateController';
 import HealthController from '../controllers/HealthController';
+import OEEController from '../controllers/OEEController';
+import MTTRMTBFController from '../controllers/MTTRMTBFController';
+import ConfigController from '../controllers/ConfigController';
 
 class AppRouter {
     router: express.Router;
@@ -63,6 +66,30 @@ class AppRouter {
         // Health API
         this.router.get('/api/health', (req, res) => HealthController.handle(req, res));
         this.router.get('/api/health/detailed', (req, res) => HealthController.handleDetailed(req, res));
+
+        // OEE API - CRUD completo
+        this.router.get('/api/oee', (req, res) => OEEController.getAll(req, res));
+        this.router.get('/api/oee/:id', (req, res) => OEEController.getById(req, res));
+        this.router.post('/api/oee', (req, res) => OEEController.create(req, res));
+        this.router.put('/api/oee/:id', (req, res) => OEEController.update(req, res));
+        this.router.delete('/api/oee/:id', (req, res) => OEEController.delete(req, res));
+
+        // MTTR/MTBF API - CRUD completo
+        this.router.get('/api/mttr-mtbf', (req, res) => MTTRMTBFController.getAll(req, res));
+        this.router.get('/api/mttr-mtbf/:id', (req, res) => MTTRMTBFController.getById(req, res));
+        this.router.post('/api/mttr-mtbf', (req, res) => MTTRMTBFController.create(req, res));
+        this.router.put('/api/mttr-mtbf/:id', (req, res) => MTTRMTBFController.update(req, res));
+        this.router.delete('/api/mttr-mtbf/:id', (req, res) => MTTRMTBFController.delete(req, res));
+
+        // Config API - CRUD completo para configuração da planta
+        this.router.get('/api/config', (req, res) => ConfigController.getAll(req, res));
+        this.router.get('/api/config/default', (req, res) => ConfigController.getDefault(req, res));
+        this.router.get('/api/config/name/:name', (req, res) => ConfigController.getByName(req, res));
+        this.router.get('/api/config/:id', (req, res) => ConfigController.getById(req, res));
+        this.router.post('/api/config', (req, res) => ConfigController.create(req, res));
+        this.router.put('/api/config/:id/set-default', (req, res) => ConfigController.setAsDefault(req, res));
+        this.router.put('/api/config/:id', (req, res) => ConfigController.update(req, res));
+        this.router.delete('/api/config/:id', (req, res) => ConfigController.delete(req, res));
     }
 
     getRouter() {

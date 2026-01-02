@@ -15,6 +15,7 @@ export interface ICarShopLeadtime {
 
 export interface ICarConfig {
     id: string;
+    sequenceNumber: number;
     model: string;
     color: string[];
     createdAt: number;
@@ -28,6 +29,9 @@ export interface ICarConfig {
     reworkCompletedAt?: number;
     shopLeadtimes: ICarShopLeadtime[];
     totalLeadtimeMs?: number;
+    // Part Line fields
+    isPart: boolean;
+    partName?: string;
 }
 
 export interface ICar extends ICarConfig {
@@ -37,6 +41,9 @@ export interface ICar extends ICarConfig {
     toggleRework(timestamp: number): void;
     addShopLeadtime(item: ICarShopLeadtime): void;
     complete(timestamp: number): void;
+    // Part Line fields
+    isPart: boolean;
+    partName?: string;
 }
 
 export class Car implements ICar {
@@ -55,8 +62,11 @@ export class Car implements ICar {
     public reworkCompletedAt?: number;
     public shopLeadtimes: ICarShopLeadtime[];
     public totalLeadtimeMs?: number;
+    // Part Line fields
+    public isPart: boolean;
+    public partName?: string;
 
-    constructor(config: ICarConfig & { sequenceNumber: number }) {
+    constructor(config: ICarConfig) {
         this.id = config.id;
         this.sequenceNumber = config.sequenceNumber;
         this.model = config.model;
@@ -67,6 +77,8 @@ export class Car implements ICar {
         this.trace = config.trace || [];
         this.shopLeadtimes = config.shopLeadtimes || [];
         this.inRework = config.inRework || false;
+        this.isPart = config.isPart || false;
+        this.partName = config.partName;
     }
 
     public addTrace(trace: ICarTrace): void {

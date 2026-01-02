@@ -23,7 +23,7 @@ export class CarEventRepository extends BaseRepository<ICarEvent> {
         return ['id', 'car_id', 'event_type', 'shop', 'line', 'station', 'timestamp', 'created_at'] as const;
     }
 
-    private normalize(event: ICarEvent): ICarEvent {
+    protected override normalize(event: ICarEvent): ICarEvent {
         if (event && typeof event.data === 'string') {
             try {
                 event.data = JSON.parse(event.data);

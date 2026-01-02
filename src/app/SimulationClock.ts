@@ -5,7 +5,6 @@ import { IPlantQueryService, PlantQueryService } from "../domain/services/PlantQ
 import { PlantFactory } from "../domain/factories/plantFactory";
 import { BufferFactory } from "../domain/factories/BufferFactory";
 import { FlowPlant } from "../domain/config/flowPlant";
-import { StopLineFactory } from "../domain/factories/StopLineFactory";
 import { IStopLine } from "../domain/models/StopLine";
 import { IBuffer } from "../domain/models/Buffer";
 import { SimulationFlow } from "./SimulationFlow";
@@ -44,8 +43,8 @@ export class SimulationClock implements ISimulationClock {
     const bufferFactory = new BufferFactory();
     this.buffers = bufferFactory.getBuffersMap();
     this.queryService = new PlantQueryService(this.shops);
-    const stopFactory = new StopLineFactory();
-    this.stops = stopFactory.getStopsMap();
+    // Stops (planned/random) são geradas pelo SimulationFlow via transições de turno.
+    this.stops = new Map<string, IStopLine>();
     this.setupClockListeners();
   }
 
@@ -160,8 +159,60 @@ export class SimulationClock implements ISimulationClock {
     this._pausedAt = 0;
     this._totalPausedTime = 0;
 
-    this.setState("stopped");
+    // Limpa estado em memória (shops, buffers, stops)
+    this.resetMemoryState();
 
+    this.setState("stopped");
+  }
+
+  public restart(): void {
+    // Para tudo primeiro
+    this.stopInterval();
+
+    // Reset todos os contadores
+    this._currentTick = 0;
+    this._currentSimulatedTime = 0;
+    this._simulatedTimestamp = this.createInitialTimestamp();
+    this._startRealTime = 0;
+    this._pausedAt = 0;
+    this._totalPausedTime = 0;
+
+    // Limpa estado em memória (shops, buffers, stops)
+    this.resetMemoryState();
+
+    // Recria o flow
+    this.flow = new SimulationFlow({
+      shops: this.shops,
+      buffers: this.buffers,
+      stops: this.stops,
+      event: this.tickEvent,
+      callbacks: this.callbacks
+    });
+
+    // Inicia do zero
+    this._startRealTime = Date.now();
+    this.startInterval();
+    this.setState("running");
+  }
+
+  private resetMemoryState(): void {
+    // Reseta estados estáticos do SimulationFlow
+    SimulationFlow.resetStaticState();
+
+    // Recria shops do zero
+    const factory = new PlantFactory();
+    this.shops = factory.createAllShops();
+    this.queryService = new PlantQueryService(this.shops);
+
+    // Recria buffers do zero
+    const bufferFactory = new BufferFactory();
+    this.buffers = bufferFactory.getBuffersMap();
+
+    // Limpa todas as stops
+    this.stops.clear();
+
+    // Limpa o flow
+    this.flow = null;
   }
 
 

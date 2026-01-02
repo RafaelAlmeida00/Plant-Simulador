@@ -161,6 +161,47 @@ export class SQLiteDatabase implements IDatabase {
             )
         `);
 
+        // Tabela de OEE
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS oee (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                shop TEXT NOT NULL,
+                line TEXT NOT NULL,
+                production_time REAL NOT NULL,
+                cars_production INTEGER NOT NULL,
+                takt_time REAL NOT NULL,
+                diff_time REAL NOT NULL,
+                oee REAL NOT NULL,
+                created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+            )
+        `);
+
+        // Tabela de MTTR/MTBF
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS mttr_mtbf (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                shop TEXT NOT NULL,
+                line TEXT NOT NULL,
+                station TEXT NOT NULL,
+                mttr REAL NOT NULL,
+                mtbf REAL NOT NULL,
+                created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+            )
+        `);
+
+        // Tabela de configuração da planta
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS config_plant (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                config TEXT NOT NULL,
+                is_default INTEGER DEFAULT 0,
+                created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+            )
+        `);
+
         // Índices para performance
         this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_car_events_timestamp ON car_events(timestamp);
@@ -168,6 +209,12 @@ export class SQLiteDatabase implements IDatabase {
             CREATE INDEX IF NOT EXISTS idx_stop_events_timestamp ON stop_events(start_time);
             CREATE INDEX IF NOT EXISTS idx_buffer_states_timestamp ON buffer_states(timestamp);
             CREATE INDEX IF NOT EXISTS idx_plant_snapshots_timestamp ON plant_snapshots(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_oee_date ON oee(date);
+            CREATE INDEX IF NOT EXISTS idx_oee_shop ON oee(shop);
+            CREATE INDEX IF NOT EXISTS idx_mttr_mtbf_date ON mttr_mtbf(date);
+            CREATE INDEX IF NOT EXISTS idx_mttr_mtbf_shop ON mttr_mtbf(shop);
+            CREATE INDEX IF NOT EXISTS idx_config_plant_name ON config_plant(name);
+            CREATE INDEX IF NOT EXISTS idx_config_plant_default ON config_plant(is_default);
         `);
     }
 }

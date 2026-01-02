@@ -1,11 +1,10 @@
-import { FlowPlant } from "../config/flowPlant";
+import { getActiveFlowPlant } from "./plantFactory";
 import { StopLine, IStopLine } from "../models/StopLine";
 
 export class StopLineFactory {
     private stops: StopLine[] = [];
     private stopsMap: Map<string, IStopLine> = new Map();
     private stopIdCounter: number = 0;
-    private static readonly flowPlantShopsEntries: [string, any][] = Object.entries(FlowPlant.shops);
     private static readonly severityRanges = {
         LOW: { min: 1, max: 5 },
         MEDIUM: { min: 5, max: 10 },
@@ -18,6 +17,7 @@ export class StopLineFactory {
     }
 
     private getProductionTimeMinutes(shopName: string, lineConfig: any): number {
+        const flowPlant = getActiveFlowPlant();
         const shiftStart = lineConfig.takt.shiftStart;
         const shiftEnd = lineConfig.takt.shiftEnd;
         const startHour = parseInt(shiftStart.substring(0, 2), 10);
@@ -28,7 +28,7 @@ export class StopLineFactory {
         let totalMinutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
         if (totalMinutes < 0) totalMinutes += 1440;
 
-        const plannedStops = FlowPlant.plannedStops;
+        const plannedStops = flowPlant.plannedStops;
         if (plannedStops) {
             const len = plannedStops.length;
             for (let i = 0; i < len; i++) {
@@ -43,12 +43,14 @@ export class StopLineFactory {
     }
 
     private createPlannedStops(): void {
-        const plannedStops = FlowPlant.plannedStops;
+        const flowPlant = getActiveFlowPlant();
+        const plannedStops = flowPlant.plannedStops;
         if (!plannedStops) return;
 
         const currentDay = new Date().getDay();
+        const flowPlantShopsEntries: [string, any][] = Object.entries(flowPlant.shops);
 
-        for (const [shopName, shopConfig] of StopLineFactory.flowPlantShopsEntries) {
+        for (const [shopName, shopConfig] of flowPlantShopsEntries) {
             const linesEntries = Object.entries(shopConfig.lines);
             for (let i = 0; i < linesEntries.length; i++) {
                 const [lineName] = linesEntries[i];
@@ -86,7 +88,10 @@ export class StopLineFactory {
     }
 
     private createRandomStops(): void {
-        for (const [shopName, shopConfig] of StopLineFactory.flowPlantShopsEntries) {
+        const flowPlant = getActiveFlowPlant();
+        const flowPlantShopsEntries: [string, any][] = Object.entries(flowPlant.shops);
+        
+        for (const [shopName, shopConfig] of flowPlantShopsEntries) {
             const linesEntries = Object.entries(shopConfig.lines);
             for (let i = 0; i < linesEntries.length; i++) {
                 const [lineName, lineConfig] = linesEntries[i] as [string, any];

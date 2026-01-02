@@ -8,7 +8,7 @@ export interface IBuffer {
     capacity: number;
     currentCount: number;
     cars: ICar[];
-    type: "BUFFER" | "REWORK_BUFFER";
+    type: "BUFFER" | "REWORK_BUFFER" | "PART_BUFFER";
     status?: "EMPTY" | "AVAILABLE" | "FULL";
 }
 
@@ -17,7 +17,7 @@ export class Buffer implements IBuffer {
     public betweenShopOrLine: "shop" | "line";
     public to: string;
     public from: string;
-    public type: "BUFFER" | "REWORK_BUFFER";
+    public type: "BUFFER" | "REWORK_BUFFER" | "PART_BUFFER";
     public capacity: number;
     public currentCount: number;
     public cars: ICar[];

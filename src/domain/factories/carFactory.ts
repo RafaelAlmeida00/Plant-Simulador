@@ -4,6 +4,7 @@ export class CarFactory {
     // Estado interno da Factory para garantir que a sequência incremente corretamente
     private currentSequence: number = 0;
     private idCounter: number = 0;
+    private partIdCounter: number = 0;
 
     // Configurações estáticas para evitar alocações
     private static readonly models = ['P19', 'P20', 'P35'];
@@ -31,13 +32,44 @@ export class CarFactory {
             inRework: false,
             trace: [],
             shopLeadtimes: [],
-            defects: []
+            defects: [],
+            isPart: false,
+            partName: undefined
+        });
+    }
+
+    /**
+     * Cria uma peça (representada como Car) para uma Part Line
+     * @param currentSimulatorTime O tempo atual do relógio do simulador
+     * @param partType Tipo da peça (e.g., "DOOR", "ENGINE")
+     */
+    public createPart(currentSimulatorTime: number, partType: string): Car {
+        this.currentSequence++;
+
+        return new Car({
+            id: this.generatePartId(partType),
+            sequenceNumber: this.currentSequence,
+            model: this.getRandomModel(),  // Peça herda modelo aleatório
+            color: [],  // Peças não têm cor
+            createdAt: currentSimulatorTime,
+            hasDefect: false,  // Peças não têm defeito (simplificação)
+            inRework: false,
+            trace: [],
+            shopLeadtimes: [],
+            defects: [],
+            isPart: true,
+            partName: partType
         });
     }
 
     private generateId(): string {
         // ID incremental com prefixo para unicidade - mais rápido que Math.random().toString(36)
         return `C${++this.idCounter}`;
+    }
+
+    private generatePartId(partType: string): string {
+        // ID incremental para peças com prefixo do tipo de peça
+        return `PART-${partType}-${++this.partIdCounter}`;
     }
 
     private getRandomModel(): string {

@@ -1,9 +1,29 @@
 import { Server } from "./adapters/http/server";
 import { SimulationFactory } from "./domain/factories/SimulationFactory";
 import { simulationEventEmitter } from "./adapters/http/websocket/SimulationEventEmitter";
+import { socketServer } from "./adapters/http/websocket/SocketServer";
+
+const serverStartTime = Date.now();
 
 export async function StartSimulation() {
     const simulation = SimulationFactory.create({
+        onTick: (event, state) => {
+            // Health a cada tick
+            simulationEventEmitter.emitHealth({
+                serverStatus: 'healthy',
+                simulatorStatus: state.status === 'running' ? 'running' : state.status === 'paused' ? 'paused' : 'stopped',
+                timestamp: Date.now(),
+                simulatorTimestamp: event.simulatedTimestamp,
+                simulatorTimeString: event.simulatedTimeString,
+                uptime: Date.now() - serverStartTime
+            });
+
+            // Plantstate a cada tick
+            void simulationEventEmitter.emitPlantState(simulation.getPlantSnapshot());
+        },
+        onCars: (cars, timestamp) => {
+            simulationEventEmitter.emitCars(cars, timestamp);
+        },
         onCarCreated: (carId, shop, line, station, timestamp) => {
             void simulationEventEmitter.emitCarCreated(carId, shop, line, station, timestamp);
         },
@@ -30,6 +50,26 @@ export async function StartSimulation() {
         },
         onStopEndedStopLine: (stop) => {
             void simulationEventEmitter.emitStopEnded(stop);
+        },
+        // OEE dinâmico - emite quando há mudança na produção
+        onOEECalculated: (oeeData) => {
+            simulationEventEmitter.emitOEE(oeeData);
+        },
+        // OEE no fim do turno - persiste no banco
+        onOEEShiftEnd: (oeeData) => {
+            void simulationEventEmitter.persistOEE(oeeData);
+        },
+        // MTTR/MTBF no fim do turno - persiste no banco
+        onMTTRMTBFCalculated: (data) => {
+            void simulationEventEmitter.persistMTTRMTBF(data);
+        },
+        // Stops com detalhes (planned e random)
+        onStopsWithDetails: (stops, plannedStops, randomStops) => {
+            simulationEventEmitter.emitAllStopsWithDetails(stops, plannedStops, randomStops);
+        },
+        // Persiste paradas geradas (planejadas e aleatórias) no banco de dados
+        onStopGenerated: (stop) => {
+            void simulationEventEmitter.persistGeneratedStop(stop);
         }
     });
 
@@ -43,11 +83,13 @@ async function main(): Promise<void> {
 
     server.setSimulatorClock(simulation);
 
+    // Conecta o socket server ao simulador para controle via WebSocket
+    socketServer.setSimulator(simulation);
+
     // Emit estados periódicos (com throttling dentro do emitter)
     simulation.onTick((tick) => {
         void simulationEventEmitter.emitAllStops(simulation.getStops());
         void simulationEventEmitter.emitAllBuffers(simulation.getBuffers(), tick.simulatedTimestamp);
-        void simulationEventEmitter.emitPlantState(simulation.getPlantSnapshot());
     });
 
     await server.listen();

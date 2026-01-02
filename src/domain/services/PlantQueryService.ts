@@ -9,14 +9,18 @@ export interface StationSnapshot {
   readonly line: string;
   readonly index: number;
   readonly taktMn: number;
+  readonly taktSg: number;
   readonly isFirstStation: boolean;
   readonly isLastStation: boolean;
   readonly occupied: boolean;
   readonly currentCarId: string | null;
+  readonly currentCarSequenceNumber: number | null;
   readonly isStopped: boolean;
   readonly stopReason?: string;
   readonly startStop: number;
   readonly finishStop: number;
+  readonly stopId?: string;
+  readonly isFirstCar: boolean;
 }
 
 
@@ -28,6 +32,9 @@ export interface LineSnapshot {
   readonly isFeederLine: boolean;
   readonly feedsToLine?: string;
   readonly feedsToStation?: string;
+  readonly MTTR?: number;
+  readonly MTBF?: number;
+  readonly productionTimeMinutes?: number;
   readonly stationCount: number;
   readonly occupiedCount: number;
   readonly freeCount: number;
@@ -39,6 +46,7 @@ export interface LineSnapshot {
 export interface ShopSnapshot {
   readonly name: string;
   readonly bufferCapacity: number;
+  readonly reworkBuffer: number;
   readonly lineCount: number;
   readonly totalStations: number;
   readonly totalOccupied: number;
@@ -241,14 +249,18 @@ export class PlantQueryService implements IPlantQueryService {
       line: station.line,
       index: station.index,
       taktMn: station.taktMn,
+      taktSg: station.taktSg ?? station.taktMn * 60,
       isFirstStation: station.isFirstStation ?? false,
       isLastStation: station.isLastStation ?? false,
       occupied: station.occupied,
       currentCarId: station.currentCar?.id ?? null,
+      currentCarSequenceNumber: station.currentCar?.sequenceNumber ?? null,
       isStopped: station.isStopped,
       stopReason: station.stopReason,
       startStop: station.startStop,
-      finishStop: station.finishStop
+      finishStop: station.finishStop,
+      stopId: station.stopId,
+      isFirstCar: station.isFirstCar
     };
   }
 
@@ -274,6 +286,9 @@ export class PlantQueryService implements IPlantQueryService {
       isFeederLine: line.isFeederLine ?? false,
       feedsToLine: line.feedsToLine,
       feedsToStation: line.feedsToStation,
+      MTTR: line.MTTR,
+      MTBF: line.MTBF,
+      productionTimeMinutes: line.productionTimeMinutes,
       stationCount: len,
       occupiedCount,
       freeCount: len - occupiedCount,
@@ -310,6 +325,7 @@ export class PlantQueryService implements IPlantQueryService {
     return {
       name: shop.name,
       bufferCapacity: shop.bufferCapacity ?? 0,
+      reworkBuffer: shop.reworkBuffer ?? 0,
       lineCount: linesLen,
       totalStations,
       totalOccupied,

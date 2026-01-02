@@ -36,7 +36,7 @@ export class StopLine {
         this.reason = config.reason;
         this.startTime = config.startTime;
         this.endTime = config.endTime;
-        this.status = "PLANNED";
+        this.status = config.status;
         this.severity = config.severity;
         this.type = config.type;
         this.category = config.category;

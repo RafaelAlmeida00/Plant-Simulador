@@ -32,6 +32,17 @@ export class PlantSnapshotRepository extends BaseRepository<IPlantSnapshotRecord
         ] as const;
     }
 
+    protected override normalize(record: IPlantSnapshotRecord): IPlantSnapshotRecord {
+        if (record && typeof record.snapshot_data === 'string') {
+            try {
+                record.snapshot_data = JSON.parse(record.snapshot_data);
+            } catch {
+                // keep as-is
+            }
+        }
+        return record;
+    }
+
     public async create(entity: Partial<IPlantSnapshotRecord>): Promise<IPlantSnapshotRecord> {
         const db = await this.getDb();
         
@@ -94,22 +105,8 @@ export class PlantSnapshotRepository extends BaseRepository<IPlantSnapshotRecord
         
         const result = await db.query<IPlantSnapshotRecord>(sql);
         if (result.rows.length > 0) {
-            const record = result.rows[0];
-            if (typeof record.snapshot_data === 'string') {
-                record.snapshot_data = JSON.parse(record.snapshot_data);
-            }
-            return record;
+            return this.normalize(result.rows[0]);
         }
         return null;
-    }
-
-    public async findByTimeRange(startTime: number, endTime: number): Promise<IPlantSnapshotRecord[]> {
-        const records = await super.findByTimeRange(startTime, endTime);
-        return records.map(record => {
-            if (typeof record.snapshot_data === 'string') {
-                record.snapshot_data = JSON.parse(record.snapshot_data);
-            }
-            return record;
-        });
     }
 }

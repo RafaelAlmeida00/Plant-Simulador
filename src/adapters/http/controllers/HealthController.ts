@@ -93,10 +93,41 @@ export class HealthController {
             const memoryUsage = process.memoryUsage();
             const cpuUsage = process.cpuUsage();
 
+            // Coleta informações do simulador
+            let simulatorStatus: 'running' | 'stopped' | 'paused' | 'unknown' = 'unknown';
+            let simulatorTimestamp: number | null = null;
+            let simulatorTimeString: string | null = null;
+            let simulatorDateString: string | null = null;
+            let currentTick: number | null = null;
+            let speedFactor: number | null = null;
+
+            if (this.simulatorClock) {
+                try {
+                    const state = this.simulatorClock.state;
+                    simulatorStatus = state === 'running' ? 'running' : 
+                                     state === 'paused' ? 'paused' : 'stopped';
+                    simulatorTimestamp = this.simulatorClock.simulatedTimestamp;
+                    simulatorTimeString = this.simulatorClock.getSimulatedTimeString();
+                    simulatorDateString = this.simulatorClock.getSimulatedDateString();
+                    currentTick = this.simulatorClock.currentTick;
+                    speedFactor = this.simulatorClock.speedFactor;
+                } catch {
+                    simulatorStatus = 'unknown';
+                }
+            }
+
             const detailed = {
                 status: 'healthy',
                 timestamp: now,
                 uptime,
+                simulator: {
+                    status: simulatorStatus,
+                    timestamp: simulatorTimestamp,
+                    timeString: simulatorTimeString,
+                    dateString: simulatorDateString,
+                    currentTick,
+                    speedFactor
+                },
                 memory: {
                     heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + ' MB',
                     heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + ' MB',

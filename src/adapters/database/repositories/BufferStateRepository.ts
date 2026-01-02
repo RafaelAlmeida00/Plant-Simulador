@@ -37,7 +37,7 @@ export class BufferStateRepository extends BaseRepository<IBufferState> {
         ] as const;
     }
 
-    private normalize(state: IBufferState): IBufferState {
+    protected override normalize(state: IBufferState): IBufferState {
         if (state && typeof state.car_ids === 'string') {
             try {
                 state.car_ids = JSON.parse(state.car_ids);

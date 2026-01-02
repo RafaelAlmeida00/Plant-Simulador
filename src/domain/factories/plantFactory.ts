@@ -4,72 +4,95 @@ import { FlowPlant } from "../config/flowPlant";
 import { ILine, Line } from "../models/Line";
 import { IShop, Shop } from "../models/Shop";
 import { IStation, Station } from "../models/Station";
+import { ConfigPlantRepository } from "../../adapters/database/repositories/ConfigPlantRepository";
+import { IFlowPlant } from "../../utils/shared";
+
+// Configuração ativa da planta (carregada do banco ou fallback para FlowPlant)
+let activeFlowPlant: IFlowPlant = FlowPlant;
 
 // Cache para evitar recálculos
-const flowPlantShopKeys: string[] = Object.keys(FlowPlant.shops);
+let flowPlantShopKeys: string[] = Object.keys(FlowPlant.shops);
+
+/**
+ * Carrega a configuração padrão do banco de dados.
+ * Se não encontrar ou houver erro, usa FlowPlant como fallback.
+ */
+export async function loadDefaultPlantConfig(): Promise<IFlowPlant> {
+    try {
+        const repository = new ConfigPlantRepository();
+        const defaultConfig = await repository.getDefault();
+        
+        if (defaultConfig && defaultConfig.config) {
+            try {
+                const parsedConfig = JSON.parse(defaultConfig.config) as IFlowPlant;
+                
+                // Valida se o config tem a estrutura mínima esperada
+                if (parsedConfig && parsedConfig.shops && Object.keys(parsedConfig.shops).length > 0) {
+                    console.log(`[PlantFactory] Loaded plant configuration from database: "${defaultConfig.name}"`);
+                    activeFlowPlant = parsedConfig;
+                    flowPlantShopKeys = Object.keys(parsedConfig.shops);
+                    return parsedConfig;
+                } else {
+                    console.warn('[PlantFactory] Database config is invalid (missing shops), using default FlowPlant');
+                }
+            } catch (parseError) {
+                console.error('[PlantFactory] Error parsing config from database:', parseError);
+                console.warn('[PlantFactory] Falling back to default FlowPlant');
+            }
+        } else {
+            console.log('[PlantFactory] No default configuration found in database, using FlowPlant');
+        }
+    } catch (dbError) {
+        console.error('[PlantFactory] Error fetching config from database:', dbError);
+        console.warn('[PlantFactory] Falling back to default FlowPlant');
+    }
+    
+    // Fallback para FlowPlant
+    activeFlowPlant = FlowPlant;
+    flowPlantShopKeys = Object.keys(FlowPlant.shops);
+    return FlowPlant;
+}
+
+/**
+ * Retorna a configuração ativa da planta.
+ */
+export function getActiveFlowPlant(): IFlowPlant {
+    return activeFlowPlant;
+}
+
+/**
+ * Define uma nova configuração ativa da planta.
+ */
+export function setActiveFlowPlant(config: IFlowPlant): void {
+    activeFlowPlant = config;
+    flowPlantShopKeys = Object.keys(config.shops);
+}
 
 export function distributeTaktAmongStations(lineTaktMs: number, stationCount: number): number[] {
     if (stationCount === 0) return [];
-    if (stationCount === 1) return [lineTaktMs];
 
-    const maxFeasibleMinFraction = 0.9 / stationCount;
-    const minFraction = maxFeasibleMinFraction < 0.05 ? maxFeasibleMinFraction : 0.05;
+    // Importante (engenharia de produção): takt da linha NÃO deve ser dividido entre as stations.
+    // Para manter o JPH coerente, cada station precisa ter cycle time < takt da linha.
+    // Aqui distribuímos tempos desiguais entre 70% e <100% do takt da linha.
+    const MIN_FRACTION = activeFlowPlant.stationTaktMinFraction ?? 0.7;
+    const MAX_FRACTION = activeFlowPlant.stationTaktMaxFraction ?? 0.999; // nunca >= 1.0
 
-    const minMs = (lineTaktMs * minFraction) | 0 || 1;
+    // Expoente < 1 puxa a distribuição para mais perto do MAX_FRACTION (mais "realista" para uma linha balanceada)
+    const BIAS_EXPONENT = 0.35;
+
     const takts = new Array<number>(stationCount);
-    let remaining = lineTaktMs - minMs * stationCount;
-
-    if (remaining < 0) {
-        const equal = (lineTaktMs / stationCount + 0.5) | 0;
-        let sum = 0;
-        for (let i = 0; i < stationCount; i++) {
-            takts[i] = equal;
-            sum += equal;
-        }
-        takts[stationCount - 1] += lineTaktMs - sum;
-        return takts;
-    }
-
-    // Distribuir o restante de forma aleatória e desigual
-    const weights = new Array<number>(stationCount);
-    let weightSum = 0;
     for (let i = 0; i < stationCount; i++) {
-        const w = 0.2 + Math.random() * 1.6;
-        weights[i] = w;
-        weightSum += w;
-    }
+        const u = Math.random();
+        const biased = Math.pow(u, BIAS_EXPONENT);
+        const maxFractionClamped = Math.min(MAX_FRACTION, 0.999);
+        const minFractionClamped = Math.max(0, Math.min(MIN_FRACTION, maxFractionClamped));
+        const fraction = minFractionClamped + (maxFractionClamped - minFractionClamped) * biased;
 
-    const extra = new Array<number>(stationCount);
-    let extraSum = 0;
-    for (let i = 0; i < stationCount; i++) {
-        const e = (weights[i] / weightSum * remaining) | 0;
-        extra[i] = e;
-        extraSum += e;
-    }
+        let taktMs = Math.floor(lineTaktMs * fraction);
+        if (taktMs >= lineTaktMs) taktMs = Math.max(1, Math.floor(lineTaktMs) - 1);
+        if (taktMs < 1) taktMs = 1;
 
-    let diff = remaining - extraSum;
-    let idx = 0;
-    while (diff !== 0 && idx < 10000) {
-        const i = idx % stationCount;
-        if (diff > 0) {
-            extra[i]++;
-            diff--;
-        } else if (extra[i] > 0) {
-            extra[i]--;
-            diff++;
-        }
-        idx++;
-    }
-
-    let finalSum = 0;
-    for (let i = 0; i < stationCount; i++) {
-        takts[i] = minMs + extra[i];
-        finalSum += takts[i];
-    }
-    takts[stationCount - 1] += lineTaktMs - finalSum;
-
-    if (takts[stationCount - 1] < 1) {
-        takts[stationCount - 1] = 1;
+        takts[i] = taktMs;
     }
 
     return takts;
@@ -79,7 +102,7 @@ export function distributeTaktAmongStations(lineTaktMs: number, stationCount: nu
 export class PlantFactory {
 
     public createShop(shopName: string): IShop {
-        const shopConfig = FlowPlant.shops[shopName];
+        const shopConfig = activeFlowPlant.shops[shopName];
         if (!shopConfig) throw new Error(`Shop ${shopName} not found in config`);
 
         const linesMap = new Map<string, ILine>();
@@ -105,7 +128,7 @@ export class PlantFactory {
             }
 
             let timePlannedStops = 0;
-            const plannedStops = FlowPlant.plannedStops;
+            const plannedStops = activeFlowPlant.plannedStops;
             if (plannedStops) {
                 const stopsLen = plannedStops.length;
                 for (let i = 0; i < stopsLen; i++) {
@@ -138,7 +161,8 @@ export class PlantFactory {
                     isStopped: false,
                     startStop: 0,
                     finishStop: 0,
-                    isFirstCar: true
+                    isFirstCar: true,
+                    taktSg: stationTakts[i] / 1000,
                 });
             }
 
@@ -152,7 +176,12 @@ export class PlantFactory {
                 feedsToStation: lineConfig.feedsToStation,
                 MTTR: lineConfig.MTTR,
                 MTBF: lineConfig.MTBF,
-                productionTimeMinutes: productionTimeMinutes
+                productionTimeMinutes: productionTimeMinutes,
+                // Part Line fields
+                partType: lineConfig.partType,
+                requiredParts: lineConfig.requiredParts,
+                partConsumptionStation: lineConfig.partConsumptionStation,
+                createWith: lineConfig.createWith
             });
 
             linesMap.set(lineName, newLine);

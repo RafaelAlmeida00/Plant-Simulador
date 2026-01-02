@@ -2,14 +2,19 @@
 
 import { socketServer } from './SocketServer';
 import { IBuffer } from '../../../domain/models/Buffer';
+import { ICar } from '../../../domain/models/Car';
 import { IStopLine } from '../../../domain/models/StopLine';
 import { PlantSnapshot } from '../../../domain/services/PlantQueryService';
 import { 
     CarEventRepository, 
     StopEventRepository, 
     BufferStateRepository, 
-    PlantSnapshotRepository 
+    PlantSnapshotRepository,
+    OEERepository,
+    MTTRMTBFRepository
 } from '../../database/repositories';
+import { OEEData } from '../../../domain/factories/OEEFactory';
+import { MTTRMTBFData } from '../../../domain/factories/MTTRMTBFFactory';
 
 /**
  * Classe responsável por emitir eventos da simulação via WebSocket
@@ -21,19 +26,25 @@ export class SimulationEventEmitter {
     private stopEventRepo: StopEventRepository;
     private bufferStateRepo: BufferStateRepository;
     private plantSnapshotRepo: PlantSnapshotRepository;
+    private oeeRepo: OEERepository;
+    private mttrmtbfRepo: MTTRMTBFRepository;
     private persistEnabled: boolean = true;
     private lastBufferEmit: number = 0;
     private lastPlantEmit: number = 0;
     private lastStopsEmit: number = 0;
+    private lastOEEEmit: number = 0;
     private readonly BUFFER_EMIT_INTERVAL = 5000; // 5 segundos
     private readonly PLANT_EMIT_INTERVAL = 10000; // 10 segundos
     private readonly STOPS_EMIT_INTERVAL = 5000; // 5 segundos
+    private readonly OEE_EMIT_INTERVAL = 1000; // 1 segundo
 
     private constructor() {
         this.carEventRepo = new CarEventRepository();
         this.stopEventRepo = new StopEventRepository();
         this.bufferStateRepo = new BufferStateRepository();
         this.plantSnapshotRepo = new PlantSnapshotRepository();
+        this.oeeRepo = new OEERepository();
+        this.mttrmtbfRepo = new MTTRMTBFRepository();
     }
 
     public static getInstance(): SimulationEventEmitter {
@@ -45,6 +56,11 @@ export class SimulationEventEmitter {
 
     public setPersistEnabled(enabled: boolean): void {
         this.persistEnabled = enabled;
+    }
+
+    // Emite estado completo da lista de carros (estrutura completa do Car)
+    public emitCars(cars: ICar[], _timestamp?: number): void {
+        socketServer.emitCars(cars);
     }
 
     // Emite evento de carro criado
@@ -357,27 +373,31 @@ export class SimulationEventEmitter {
 
     // Emite estado completo da planta
     public async emitPlantState(snapshot: PlantSnapshot): Promise<void> {
+        // Emissão via websocket: a cada tick
+        socketServer.emitPlantState(snapshot);
+
+        // Persistência em banco: com throttling (evita volume excessivo)
+        if (!this.persistEnabled) {
+            return;
+        }
+
         const now = Date.now();
         if (now - this.lastPlantEmit < this.PLANT_EMIT_INTERVAL) {
             return;
         }
         this.lastPlantEmit = now;
 
-        socketServer.emitPlantState(snapshot);
-
-        if (this.persistEnabled) {
-            try {
-                await this.plantSnapshotRepo.create({
-                    timestamp: snapshot.timestamp,
-                    total_stations: snapshot.totalStations,
-                    total_occupied: snapshot.totalOccupied,
-                    total_free: snapshot.totalFree,
-                    total_stopped: snapshot.totalStopped,
-                    snapshot_data: snapshot
-                });
-            } catch (error) {
-                console.error('[EVENT_EMITTER] Error persisting plant snapshot:', error);
-            }
+        try {
+            await this.plantSnapshotRepo.create({
+                timestamp: snapshot.timestamp,
+                total_stations: snapshot.totalStations,
+                total_occupied: snapshot.totalOccupied,
+                total_free: snapshot.totalFree,
+                total_stopped: snapshot.totalStopped,
+                snapshot_data: snapshot
+            });
+        } catch (error) {
+            console.error('[EVENT_EMITTER] Error persisting plant snapshot:', error);
         }
     }
 
@@ -391,6 +411,93 @@ export class SimulationEventEmitter {
         uptime: number;
     }): void {
         socketServer.emitHealth(status);
+    }
+
+    // Emite OEE em tempo real via WebSocket
+    public emitOEE(oeeData: OEEData[]): void {
+        const now = Date.now();
+        if (now - this.lastOEEEmit < this.OEE_EMIT_INTERVAL) {
+            return;
+        }
+        this.lastOEEEmit = now;
+        socketServer.emitOEE(oeeData);
+    }
+
+    // Persiste OEE no banco de dados (chamado no fim do turno)
+    public async persistOEE(oeeData: OEEData): Promise<void> {
+        if (!this.persistEnabled) return;
+        
+        try {
+            await this.oeeRepo.create({
+                date: oeeData.date,
+                shop: oeeData.shop,
+                line: oeeData.line,
+                production_time: oeeData.productionTime,
+                cars_production: oeeData.carsProduction,
+                takt_time: oeeData.taktTime,
+                diff_time: oeeData.diffTime,
+                oee: oeeData.oee
+            });
+        } catch (error) {
+            console.error('[EVENT_EMITTER] Error persisting OEE:', error);
+        }
+    }
+
+    // Persiste MTTR/MTBF no banco de dados (chamado no fim do turno)
+    public async persistMTTRMTBF(data: MTTRMTBFData): Promise<void> {
+        if (!this.persistEnabled) return;
+        
+        try {
+            await this.mttrmtbfRepo.create({
+                date: data.date,
+                shop: data.shop,
+                line: data.line,
+                station: data.station,
+                mttr: data.mttr,
+                mtbf: data.mtbf
+            });
+        } catch (error) {
+            console.error('[EVENT_EMITTER] Error persisting MTTR/MTBF:', error);
+        }
+    }
+
+    // Emite estado de todos os stops com paradas planejadas e aleatórias
+    public emitAllStopsWithDetails(
+        stops: Map<string, IStopLine>, 
+        plannedStops: any[], 
+        randomStops: IStopLine[]
+    ): void {
+        const now = Date.now();
+        if (now - this.lastStopsEmit < this.STOPS_EMIT_INTERVAL) {
+            return;
+        }
+        this.lastStopsEmit = now;
+        socketServer.emitStopsWithDetails(stops, plannedStops, randomStops);
+    }
+
+    // Persiste parada gerada (planejada ou aleatória) no banco de dados
+    public async persistGeneratedStop(stop: IStopLine): Promise<void> {
+        if (!this.persistEnabled) return;
+
+        try {
+            await this.stopEventRepo.create({
+                stop_id: stop.id.toString(),
+                shop: stop.shop,
+                line: stop.line,
+                station: stop.station,
+                reason: stop.reason,
+                severity: stop.severity || undefined,
+                type: stop.type,
+                category: stop.category,
+                start_time: stop.startTime,
+                end_time: stop.endTime,
+                status: stop.status,
+                duration_ms: stop.durationMs
+            });
+            console.log(`[EVENT_EMITTER] Persisted generated stop: ${stop.id} (${stop.type}) - ${stop.reason}`);
+        } catch (error) {
+            console.error('[EVENT_EMITTER] Error persisting generated stop:', error);
+        }
     }
 }
 

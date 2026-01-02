@@ -1,5 +1,6 @@
 import { ICar } from "./Car";
 import { IStation } from "./Station";
+import { RequiredPart } from "../../utils/shared";
 
 export interface ILine {
   shop: string;
@@ -12,6 +13,12 @@ export interface ILine {
   MTTR?: number;
   MTBF?: number;
   productionTimeMinutes?: number;
+  // Part Line fields
+  partType?: string;                    // If set, this line produces parts of this type
+  requiredParts?: RequiredPart[];       // Parts required by this line to operate
+  partConsumptionStation?: string;      // Station that consumes parts (default: first station)
+  // CreateWith - only create parts when specified line/station has output
+  createWith?: { line: string; station: string };  // Sync part creation with another line's output
 }
 
 export class Line {
@@ -26,7 +33,12 @@ export class Line {
   public MTTR?: number;
   public MTBF?: number;
   productionTimeMinutes?: number;
-
+  // Part Line fields
+  public partType?: string;
+  public requiredParts?: RequiredPart[];
+  public partConsumptionStation?: string;
+  // CreateWith - only create parts when specified line/station has output
+  public createWith?: { line: string; station: string };
 
   constructor(config: ILine) {
     this.id = `${config.shop}-${config.line}`;
@@ -40,6 +52,10 @@ export class Line {
     this.MTTR = config.MTTR;
     this.MTBF = config.MTBF;
     this.productionTimeMinutes = config.productionTimeMinutes;
+    this.partType = config.partType;
+    this.requiredParts = config.requiredParts;
+    this.partConsumptionStation = config.partConsumptionStation;
+    this.createWith = config.createWith;
   }
 
   /** Retorna todas as estações da linha em ordem */

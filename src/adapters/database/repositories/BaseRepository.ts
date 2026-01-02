@@ -8,6 +8,10 @@ export abstract class BaseRepository<T> implements IRepository<T> {
     protected abstract idColumn: string;
     protected abstract timestampColumn: string;
 
+    protected normalize(entity: T): T {
+        return entity;
+    }
+
     protected allowedFilterColumns(): readonly string[] {
         return [];
     }
@@ -47,7 +51,7 @@ export abstract class BaseRepository<T> implements IRepository<T> {
         sql += ` ORDER BY ${this.timestampColumn} DESC`;
 
         const result = await db.query<T>(this.convertPlaceholders(db, sql), params);
-        return result.rows;
+        return result.rows.map(r => this.normalize(r));
     }
 
     public async findById(id: string | number): Promise<T | null> {
@@ -55,7 +59,8 @@ export abstract class BaseRepository<T> implements IRepository<T> {
         const sql = `SELECT * FROM ${this.tableName} WHERE ${this.idColumn} = $1`;
 
         const result = await db.query<T>(this.convertPlaceholders(db, sql), [id]);
-        return result.rows[0] || null;
+        const row = result.rows[0] || null;
+        return row ? this.normalize(row) : null;
     }
 
     public async findByTimeRange(startTime: number, endTime: number): Promise<T[]> {
@@ -63,7 +68,7 @@ export abstract class BaseRepository<T> implements IRepository<T> {
         const sql = `SELECT * FROM ${this.tableName} WHERE ${this.timestampColumn} >= $1 AND ${this.timestampColumn} <= $2 ORDER BY ${this.timestampColumn} DESC`;
 
         const result = await db.query<T>(this.convertPlaceholders(db, sql), [startTime, endTime]);
-        return result.rows;
+        return result.rows.map(r => this.normalize(r));
     }
 
     public abstract create(entity: Partial<T>): Promise<T>;

@@ -2,8 +2,9 @@
 // TIPOS DE CONFIGURAÇÃO
 // ============================================
 
-import { IShop } from "../domain/models/Shop";
-import { IStopLine } from "../domain/models/StopLine";
+import type { IShop } from "../domain/models/Shop";
+import type { IStopLine } from "../domain/models/StopLine";
+import type { ICar } from "../domain/models/Car";
 
 export interface TaktConfig {
   jph: number;         // carros por hora
@@ -38,6 +39,11 @@ export interface BufferConfig { capacity: number; }
 export interface RouteTo { shop: string; line: string; station?: string; }
 export interface Route { fromStation: string; to: RouteTo[]; }
 
+// Part Line configuration - required parts for consuming lines
+export interface RequiredPart {
+  partType: string;           // Type of part required (e.g., "DOOR", "ENGINE")
+  consumeStation?: string;    // Station that consumes this part (default: first station)
+}
 
 export interface StartProductionStation {
   shop: string;
@@ -55,6 +61,11 @@ export interface IFlowPlant {
   targetJPH?: number;               // JPH alvo padrão
   typeSpeedFactor?: number;
   Rework_Time?: number;         // Fator de velocidade da simulação (1 = tempo real, 10 = 10x mais rápido)
+
+  // Distribuição do takt entre stations (balanceamento)
+  // Frações relativas ao takt da linha. Ex.: 0.7 = 70% do takt.
+  stationTaktMinFraction?: number;
+  stationTaktMaxFraction?: number;
   
   // Lista de postos que recebem carros "novos" (injeção no fluxo)
   // Por padrão, deve conter apenas o 1º posto da 1ª linha do fluxo.
@@ -195,6 +206,8 @@ export interface SimulationCallbacks {
   
   // Eventos de carros
   onCarCreated?: (carId: string, shop: string, line: string, station: string, timestamp: number) => void;
+  // Estado completo dos carros (em memória) - emitido sempre que um novo carro é criado
+  onCars?: (cars: ICar[], timestamp: number) => void;
   onCarMoved?: (carId: string, fromShop: string, fromLine: string, fromStation: string, 
                 toShop: string, toLine: string, toStation: string, timestamp: number) => void;
   onCarCompleted?: (carId: string, shop: string, line: string, station: string, 
@@ -215,6 +228,11 @@ export interface SimulationCallbacks {
   // Versões detalhadas (adapters)
   onReworkInDetailed?: (carId: string, bufferId: string, shop: string, line: string, station: string, defectId: string, timestamp: number) => void;
   onReworkOutDetailed?: (carId: string, bufferId: string, shop: string, line: string, station: string, timestamp: number) => void;
+
+  // Eventos de peças (Part Lines)
+  onPartCreated?: (partId: string, partType: string, model: string, shop: string, line: string, station: string, timestamp: number) => void;
+  onPartConsumed?: (partId: string, partType: string, model: string, carId: string, shop: string, line: string, station: string, timestamp: number) => void;
+  onPartShortage?: (carId: string, partType: string, model: string, shop: string, line: string, station: string, timestamp: number) => void;
   
   // Eventos de paradas
   onStopStarted?: (stopId: string, shop: string, line: string, station: string, 
@@ -226,4 +244,17 @@ export interface SimulationCallbacks {
   // Versões detalhadas (adapters)
   onStopStartedStopLine?: (stop: IStopLine) => void;
   onStopEndedStopLine?: (stop: IStopLine) => void;
+
+  // Eventos de OEE (emitidos ao fim do turno e dinamicamente)
+  onOEECalculated?: (oeeData: any[]) => void;
+  onOEEShiftEnd?: (oeeData: any) => void;
+
+  // Eventos de MTTR/MTBF (emitidos ao fim do turno)
+  onMTTRMTBFCalculated?: (data: any) => void;
+
+  // Eventos de stops com detalhes (inclui planned e random)
+  onStopsWithDetails?: (stops: Map<string, IStopLine>, plannedStops: any[], randomStops: IStopLine[]) => void;
+
+  // Evento para persistir paradas geradas (planejadas e aleatórias)
+  onStopGenerated?: (stop: IStopLine) => void;
 }

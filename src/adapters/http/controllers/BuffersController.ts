@@ -10,6 +10,19 @@ export class BuffersController {
         this.repository = new BufferStateRepository();
     }
 
+    private deriveBetweenShopOrLine(fromLocation: string, toLocation: string): 'shop' | 'line' {
+        const fromShop = (fromLocation || '').split('-')[0] || '';
+        const toShop = (toLocation || '').split('-')[0] || '';
+        return fromShop && toShop && fromShop === toShop ? 'line' : 'shop';
+    }
+
+    private enrich(buffer: IBufferState): IBufferState & { between_shop_or_line: 'shop' | 'line' } {
+        return {
+            ...buffer,
+            between_shop_or_line: this.deriveBetweenShopOrLine(buffer.from_location, buffer.to_location)
+        };
+    }
+
     // GET /api/buffers - Lista todos os estados de buffer com filtros opcionais
     public async getAll(req: Request, res: Response): Promise<void> {
         try {
@@ -21,20 +34,23 @@ export class BuffersController {
                     parseInt(start_time as string, 10),
                     parseInt(end_time as string, 10)
                 );
-                res.json({ success: true, data: buffers, count: buffers.length });
+                const data = buffers.map(b => this.enrich(b));
+                res.json({ success: true, data, count: data.length });
                 return;
             }
 
             // Filtros específicos
             if (buffer_id) {
                 const buffers = await this.repository.findByBufferId(buffer_id as string);
-                res.json({ success: true, data: buffers, count: buffers.length });
+                const data = buffers.map(b => this.enrich(b));
+                res.json({ success: true, data, count: data.length });
                 return;
             }
 
             if (status) {
                 const buffers = await this.repository.findByStatus(status as string);
-                res.json({ success: true, data: buffers, count: buffers.length });
+                const data = buffers.map(b => this.enrich(b));
+                res.json({ success: true, data, count: data.length });
                 return;
             }
 
@@ -45,7 +61,8 @@ export class BuffersController {
             if (to_location) filters.to_location = to_location;
 
             const buffers = await this.repository.findAll(Object.keys(filters).length > 0 ? filters : undefined);
-            res.json({ success: true, data: buffers, count: buffers.length });
+            const data = buffers.map(b => this.enrich(b));
+            res.json({ success: true, data, count: data.length });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }
@@ -58,13 +75,15 @@ export class BuffersController {
             
             if (buffer_id) {
                 const buffer = await this.repository.findLatestByBufferId(buffer_id as string);
-                res.json({ success: true, data: buffer ? [buffer] : [], count: buffer ? 1 : 0 });
+                const data = buffer ? [this.enrich(buffer)] : [];
+                res.json({ success: true, data, count: data.length });
                 return;
             }
 
             // Retorna todos os buffers (último estado)
             const data = await this.repository.findLatestPerBuffer();
-            res.json({ success: true, data, count: data.length });
+            const enriched = data.map(b => this.enrich(b));
+            res.json({ success: true, data: enriched, count: enriched.length });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }
@@ -81,7 +100,7 @@ export class BuffersController {
                 return;
             }
 
-            res.json({ success: true, data: buffer });
+            res.json({ success: true, data: this.enrich(buffer) });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }
@@ -103,7 +122,7 @@ export class BuffersController {
             }
 
             const buffer = await this.repository.create(bufferData);
-            res.status(201).json({ success: true, data: buffer });
+            res.status(201).json({ success: true, data: this.enrich(buffer) });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }
@@ -122,7 +141,7 @@ export class BuffersController {
                 return;
             }
 
-            res.json({ success: true, data: buffer });
+            res.json({ success: true, data: this.enrich(buffer) });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }

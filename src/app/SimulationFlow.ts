@@ -5,7 +5,10 @@ import { IBuffer } from "../domain/models/Buffer";
 import { IStopLine, StopLine } from "../domain/models/StopLine";
 import { ICar, ICarTrace } from "../domain/models/Car";
 import { FlowPlant } from "../domain/config/flowPlant";
+import { getActiveFlowPlant } from "../domain/factories/plantFactory";
 import { CarFactory } from "../domain/factories/carFactory";
+import { OEEFactory, OEEData } from "../domain/factories/OEEFactory";
+import { MTTRMTBFFactory, MTTRMTBFData } from "../domain/factories/MTTRMTBFFactory";
 import { TickEvent, SimulationCallbacks } from "../utils/shared";
 
 interface FlowContext {
@@ -27,14 +30,48 @@ export class SimulationFlow {
     private stops: Map<string, IStopLine>;
     private event: TickEvent;
     private callbacks?: SimulationCallbacks;
+    private cars: ICar[] = [];
     private static carFactory: CarFactory = new CarFactory();
     private static stopIdCounter: number = 10000;
     private static shiftStates: Map<string, ShiftState> = new Map();
     private static alternateReworkPull: boolean = false;
-    private static readonly flowPlantShopsEntries: [string, any][] = Object.entries(FlowPlant.shops);
-    private static readonly reworkTimeMs: number = (FlowPlant.Rework_Time || 60) * 60000;
-    private static readonly dphu: number = FlowPlant.DPHU || 5;
-    private static readonly TWO_HOURS_MS: number = 2 * 60 * 60 * 1000;
+    private static readonly reworkTimeMs: number = (getActiveFlowPlant().Rework_Time || 60) * 60000;
+    private static readonly dphu: number = getActiveFlowPlant().DPHU || 5;
+    private static readonly TWO_HOURS_MS: number = 1 * 60 * 60 * 1000;
+    
+    // Part shortage tracking - stations waiting for parts
+    private static partShortageStations: Map<string, { partType: string; startTime: number }> = new Map();
+    
+    // CreateWith tracking - tracks when a car leaves a station (for synchronized part creation)
+    // Key: "shopName-lineName-stationId", Value: timestamp of last car exit
+    private static stationExitThisTick: Set<string> = new Set();
+    
+    // Tracking para OEE dinâmico - armazena a última contagem de carros produzidos por linha
+    private static lastCarsProducedByLine: Map<string, number> = new Map();
+    // Tracking para saber se já calculou OEE no shiftend (evita duplicação)
+    private static oeeCalculatedForShift: Map<string, string> = new Map();
+
+    private static readonly FLOW_REASONS: ReadonlyArray<string> = [
+        "NEXT_FULL",
+        "PREV_EMPTY",
+        "Next Full",
+        "Prev Empty",
+        "Buffer Empty",
+        "Buffer Full",
+        "Rework Full"
+    ];
+
+    // Reseta todos os estados estáticos para permitir restart limpo da simulação
+    public static resetStaticState(): void {
+        SimulationFlow.carFactory = new CarFactory();
+        SimulationFlow.stopIdCounter = 10000;
+        SimulationFlow.shiftStates.clear();
+        SimulationFlow.alternateReworkPull = false;
+        SimulationFlow.lastCarsProducedByLine.clear();
+        SimulationFlow.oeeCalculatedForShift.clear();
+        SimulationFlow.partShortageStations.clear();
+        SimulationFlow.stationExitThisTick.clear();
+    }
 
     constructor(context: FlowContext) {
         this.shops = context.shops;
@@ -44,16 +81,27 @@ export class SimulationFlow {
         this.callbacks = context.callbacks;
     }
 
+    private emitCarsSnapshot(): void {
+        this.callbacks?.onCars?.(this.cars, this.event.simulatedTimestamp);
+    }
+
     public updateEvent(event: TickEvent): void {
         this.event = event;
     }
 
     public execute(): void {
+        // Clear station exits tracking at the start of each tick
+        SimulationFlow.stationExitThisTick.clear();
+        
         this.checkShiftTransitions();
         this.updateScheduledStops();
-        this.createCarsAtStartStations();
+        // Process stations first to track exits, then create parts
         this.processAllStations();
         this.processReworkBuffers();
+        // Create cars/parts after processing to use exit tracking for createWith
+        this.createCarsAtStartStations();
+        this.calculateDynamicOEE();
+        this.emitStopsWithDetails();
     }
 
     // Verifica transições de turno (início e fim)
@@ -63,8 +111,11 @@ export class SimulationFlow {
         const m = simDate.getMinutes();
         const currentTimeStr = `${h < 10 ? '0' : ''}${h}:${m < 10 ? '0' : ''}${m}`;
         const currentDateStr = simDate.toDateString();
+        
+        const flowPlant = getActiveFlowPlant();
+        const flowPlantShopsEntries: [string, any][] = Object.entries(flowPlant.shops);
 
-        for (const [shopName, shopConfig] of SimulationFlow.flowPlantShopsEntries) {
+        for (const [shopName, shopConfig] of flowPlantShopsEntries) {
             const linesEntries = Object.entries((shopConfig as any).lines);
             for (let i = 0; i < linesEntries.length; i++) {
                 const [lineName, lineConfig] = linesEntries[i];
@@ -78,15 +129,18 @@ export class SimulationFlow {
                     SimulationFlow.shiftStates.set(lineKey, state);
                 }
 
-                // Fim do turno - limpa paradas da linha
+                // Fim do turno - limpa paradas da linha e calcula OEE/MTTR/MTBF
                 if (currentTimeStr === shiftEnd && state.isActive) {
-                    this.clearLineStops(shopName, lineName);
                     state.isActive = false;
                     this.log(`SHIFT_END: ${lineKey}`);
+                    
+                    // Calcula OEE e MTTR/MTBF ao final do turno
+                    this.calculateShiftEndMetrics(shopName, lineName, lineConfig, currentDateStr);
                 }
 
                 // Início do turno - recria paradas para novo dia
                 if (currentTimeStr === shiftStart && state.lastShiftDate !== currentDateStr) {
+                    this.clearLineStops(shopName, lineName);
                     this.regenerateLineStops(shopName, lineName, lineConfig);
                     state.isActive = true;
                     state.lastShiftDate = currentDateStr;
@@ -107,19 +161,41 @@ export class SimulationFlow {
         for (const key of keysToDelete) {
             this.stops.delete(key);
         }
+
+        // Evita estado inconsistente: pode existir station com isStopped=true mesmo após remover StopLines.
+        const shop = this.shops.get(shopName);
+        if (shop) {
+            const line = this.getLineFromShop(shop, lineName);
+            if (line) {
+                const stations = line.stations;
+                for (let i = 0; i < stations.length; i++) {
+                    stations[i].isStopped = false;
+                    stations[i].stopReason = undefined;
+                    stations[i].stopId = undefined;
+                    stations[i].startStop = 0;
+                    stations[i].finishStop = 0;
+                }
+            }
+        }
         this.log(`STOPS_CLEARED: ${shopName}/${lineName} (${keysToDelete.length} stops)`);
     }
 
     // Regenera paradas planejadas e aleatórias para uma linha
     private regenerateLineStops(shopName: string, lineName: string, lineConfig: any): void {
+        const simDate = new Date(this.event.simulatedTimestamp);
+        const dayStart = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate(), 0, 0, 0, 0).getTime();
+        
+        const flowPlant = getActiveFlowPlant();
+
         // Gera paradas planejadas
-        if (FlowPlant.plannedStops) {
-            for (const stop of FlowPlant.plannedStops) {
+        if (flowPlant.plannedStops) {
+            for (const stop of flowPlant.plannedStops) {
                 if (stop.affectsShops && !stop.affectsShops.includes(shopName)) continue;
-                if (stop.daysOfWeek?.includes(new Date().getDay()) === false) continue;
+                if (stop.daysOfWeek?.includes(simDate.getDay()) === false) continue;
 
                 const [hour, minute] = stop.startTime.split(":").map(Number);
-                const startTimeMs = (hour * 60 + minute) * 60 * 1000;
+                const startTimeTs = dayStart + (hour * 60 + minute) * 60 * 1000;
+                const durationMs = stop.durationMn * 60 * 1000;
 
                 const newStop = new StopLine({
                     id: ++SimulationFlow.stopIdCounter,
@@ -127,15 +203,17 @@ export class SimulationFlow {
                     line: lineName,
                     station: "ALL",
                     reason: stop.name,
-                    startTime: startTimeMs,
-                    endTime: startTimeMs + stop.durationMn * 60 * 1000,
+                    startTime: startTimeTs,
+                    endTime: startTimeTs + durationMs,
                     status: "PLANNED",
                     severity: "LOW",
                     type: "PLANNED",
                     category: stop.type as any,
-                    durationMs: stop.durationMn * 60 * 1000
+                    durationMs
                 });
                 this.stops.set(newStop.id.toString(), newStop);
+                // Persiste a parada planejada no banco de dados
+                this.callbacks?.onStopGenerated?.(newStop);
             }
         }
 
@@ -149,9 +227,12 @@ export class SimulationFlow {
             const stations = lineConfig.stations || [];
             const productionTimeMs = productionTimeMinutes * 60 * 1000;
 
+            const [shiftStartHour, shiftStartMinute] = (lineConfig.takt?.shiftStart || "07:00").split(":").map(Number);
+            const shiftStartTs = dayStart + (shiftStartHour * 60 + shiftStartMinute) * 60 * 1000;
+
             for (let i = 0; i < numStops; i++) {
                 const randomStation = stations[Math.floor(Math.random() * stations.length)];
-                const startTime = Math.floor(Math.random() * productionTimeMs);
+                const startTime = shiftStartTs + Math.floor(Math.random() * productionTimeMs);
                 const severity = this.randomSeverity();
                 const durationMs = this.randomDurationBySeverity(severity, mttrMinutes);
 
@@ -170,6 +251,8 @@ export class SimulationFlow {
                     durationMs
                 });
                 this.stops.set(newStop.id.toString(), newStop);
+                // Persiste a parada aleatória no banco de dados
+                this.callbacks?.onStopGenerated?.(newStop);
             }
         }
 
@@ -183,14 +266,241 @@ export class SimulationFlow {
         let totalMinutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
         if (totalMinutes < 0) totalMinutes += 24 * 60;
 
-        if (FlowPlant.plannedStops) {
-            for (const stop of FlowPlant.plannedStops) {
+        const flowPlant = getActiveFlowPlant();
+        if (flowPlant.plannedStops) {
+            for (const stop of flowPlant.plannedStops) {
                 if (!stop.affectsShops || stop.affectsShops.includes(shopName)) {
                     totalMinutes -= stop.durationMn;
                 }
             }
         }
         return totalMinutes;
+    }
+
+    // Calcula métricas de OEE e MTTR/MTBF ao final do turno
+    private calculateShiftEndMetrics(shopName: string, lineName: string, lineConfig: any, dateStr: string): void {
+        const lineKey = `${shopName}-${lineName}`;
+        const shiftKey = `${lineKey}-${dateStr}`;
+        
+        // Evita calcular duas vezes no mesmo dia/linha
+        if (SimulationFlow.oeeCalculatedForShift.get(lineKey) === dateStr) {
+            return;
+        }
+        SimulationFlow.oeeCalculatedForShift.set(lineKey, dateStr);
+
+        const productionTimeMinutes = this.getProductionTimeMinutes(shopName, lineConfig);
+        const taktMinutes = 60 / ((lineConfig.takt?.jph) || 28); // JPH para minutos por carro
+        const shiftStart = lineConfig.takt?.shiftStart || "07:00";
+        const shiftEnd = lineConfig.takt?.shiftEnd || "23:48";
+        
+        // Encontra a última station da linha
+        const shop = this.shops.get(shopName);
+        if (!shop) return;
+        
+        const line = this.getLineFromShop(shop, lineName);
+        if (!line) return;
+        
+        const lastStation = line.stations[line.stations.length - 1];
+        if (!lastStation) return;
+
+        // Calcula OEE para a linha
+        const lineOEE = OEEFactory.calculateLineOEE({
+            shop: shopName,
+            line: lineName,
+            productionTimeMinutes,
+            taktTimeMinutes: taktMinutes,
+            cars: this.cars,
+            simulatedTimestamp: this.event.simulatedTimestamp,
+            shiftStart,
+            shiftEnd,
+            lastStationId: lastStation.id
+        });
+
+        this.log(`OEE_CALCULATED: ${lineKey} = ${lineOEE.oee.toFixed(2)}% (${lineOEE.carsProduction} carros)`);
+        this.callbacks?.onOEEShiftEnd?.(lineOEE);
+
+        // Calcula MTTR/MTBF para cada station da linha
+        const lineStops = MTTRMTBFFactory.getLineStops(this.stops, shopName, lineName);
+        const stationMTTRMTBFData: MTTRMTBFData[] = [];
+
+        for (const station of line.stations) {
+            const stationData = MTTRMTBFFactory.calculateStationMTTRMTBF({
+                shop: shopName,
+                line: lineName,
+                station: station.id,
+                productionTimeMinutes,
+                stops: lineStops,
+                simulatedTimestamp: this.event.simulatedTimestamp
+            });
+            stationMTTRMTBFData.push(stationData);
+            this.callbacks?.onMTTRMTBFCalculated?.(stationData);
+        }
+
+        // Calcula MTTR/MTBF agregado para a linha
+        const lineMTTRMTBF = MTTRMTBFFactory.calculateLineMTTRMTBF(stationMTTRMTBFData, productionTimeMinutes);
+        if (lineMTTRMTBF) {
+            this.log(`MTTR/MTBF_CALCULATED: ${lineKey} - MTTR: ${lineMTTRMTBF.mttr.toFixed(2)}min, MTBF: ${lineMTTRMTBF.mtbf.toFixed(2)}min`);
+            this.callbacks?.onMTTRMTBFCalculated?.(lineMTTRMTBF);
+        }
+
+        // Verifica se todas as linhas do shop terminaram para calcular agregados do shop
+        this.checkAndCalculateShopMetrics(shopName, dateStr);
+    }
+
+    // Verifica se todas as linhas de um shop terminaram e calcula métricas agregadas
+    private checkAndCalculateShopMetrics(shopName: string, dateStr: string): void {
+        const flowPlant = getActiveFlowPlant();
+        const shopConfig = (flowPlant.shops as any)[shopName];
+        if (!shopConfig) return;
+
+        const lines = Object.keys(shopConfig.lines);
+        const allLinesFinished = lines.every(lineName => {
+            const lineKey = `${shopName}-${lineName}`;
+            return SimulationFlow.oeeCalculatedForShift.get(lineKey) === dateStr;
+        });
+
+        if (!allLinesFinished) return;
+
+        // Coleta OEE de todas as linhas do shop
+        const lineOEEs: OEEData[] = [];
+        const lineMTTRMTBFs: MTTRMTBFData[] = [];
+
+        for (const lineName of lines) {
+            const lineConfig = shopConfig.lines[lineName];
+            const productionTimeMinutes = this.getProductionTimeMinutes(shopName, lineConfig);
+            const taktMinutes = 60 / ((lineConfig.takt?.jph) || 28);
+            const shiftStart = lineConfig.takt?.shiftStart || "07:00";
+            const shiftEnd = lineConfig.takt?.shiftEnd || "23:48";
+            
+            const shop = this.shops.get(shopName);
+            if (!shop) continue;
+            
+            const line = this.getLineFromShop(shop, lineName);
+            if (!line) continue;
+            
+            const lastStation = line.stations[line.stations.length - 1];
+            if (!lastStation) continue;
+
+            const lineOEE = OEEFactory.calculateLineOEE({
+                shop: shopName,
+                line: lineName,
+                productionTimeMinutes,
+                taktTimeMinutes: taktMinutes,
+                cars: this.cars,
+                simulatedTimestamp: this.event.simulatedTimestamp,
+                shiftStart,
+                shiftEnd,
+                lastStationId: lastStation.id
+            });
+            lineOEEs.push(lineOEE);
+
+            // MTTR/MTBF agregado da linha
+            const lineStops = MTTRMTBFFactory.getLineStops(this.stops, shopName, lineName);
+            const stationMTTRMTBFData: MTTRMTBFData[] = [];
+            for (const station of line.stations) {
+                stationMTTRMTBFData.push(MTTRMTBFFactory.calculateStationMTTRMTBF({
+                    shop: shopName,
+                    line: lineName,
+                    station: station.id,
+                    productionTimeMinutes,
+                    stops: lineStops,
+                    simulatedTimestamp: this.event.simulatedTimestamp
+                }));
+            }
+            const lineMTTRMTBF = MTTRMTBFFactory.calculateLineMTTRMTBF(stationMTTRMTBFData, productionTimeMinutes);
+            if (lineMTTRMTBF) {
+                lineMTTRMTBFs.push(lineMTTRMTBF);
+            }
+        }
+
+        // Calcula OEE do shop (média das linhas)
+        const shopOEE = OEEFactory.calculateShopOEE(lineOEEs);
+        if (shopOEE) {
+            this.log(`OEE_SHOP_CALCULATED: ${shopName} = ${shopOEE.oee.toFixed(2)}%`);
+            this.callbacks?.onOEEShiftEnd?.(shopOEE);
+        }
+
+        // Calcula MTTR/MTBF do shop (média das linhas)
+        const shopMTTRMTBF = MTTRMTBFFactory.calculateShopMTTRMTBF(lineMTTRMTBFs);
+        if (shopMTTRMTBF) {
+            this.log(`MTTR/MTBF_SHOP_CALCULATED: ${shopName} - MTTR: ${shopMTTRMTBF.mttr.toFixed(2)}min, MTBF: ${shopMTTRMTBF.mtbf.toFixed(2)}min`);
+            this.callbacks?.onMTTRMTBFCalculated?.(shopMTTRMTBF);
+        }
+    }
+
+    // Calcula OEE dinâmico e emite se houver mudança na produção
+    private calculateDynamicOEE(): void {
+        const oeeResults: OEEData[] = [];
+        let hasChange = false;
+
+        const flowPlant = getActiveFlowPlant();
+        const flowPlantShopsEntries: [string, any][] = Object.entries(flowPlant.shops);
+        for (const [shopName, shopConfig] of flowPlantShopsEntries) {
+            const linesEntries = Object.entries((shopConfig as any).lines);
+            
+            for (const [lineName, lineConfig] of linesEntries) {
+                const lineKey = `${shopName}-${lineName}`;
+                const productionTimeMinutes = this.getProductionTimeMinutes(shopName, lineConfig as any);
+                const taktMinutes = 60 / (((lineConfig as any).takt?.jph) || 28);
+                const shiftStart = (lineConfig as any).takt?.shiftStart || "07:00";
+                const shiftEnd = (lineConfig as any).takt?.shiftEnd || "23:48";
+                
+                const shop = this.shops.get(shopName);
+                if (!shop) continue;
+                
+                const line = this.getLineFromShop(shop, lineName);
+                if (!line) continue;
+                
+                const lastStation = line.stations[line.stations.length - 1];
+                if (!lastStation) continue;
+
+                // Calcula OEE dinâmico
+                const oeeData = OEEFactory.calculateDynamicOEE({
+                    shop: shopName,
+                    line: lineName,
+                    productionTimeMinutes,
+                    taktTimeMinutes: taktMinutes,
+                    cars: this.cars,
+                    simulatedTimestamp: this.event.simulatedTimestamp,
+                    shiftStart,
+                    shiftEnd,
+                    lastStationId: lastStation.id
+                });
+
+                oeeResults.push(oeeData);
+
+                // Verifica se houve mudança na produção
+                const lastCount = SimulationFlow.lastCarsProducedByLine.get(lineKey) || 0;
+                if (oeeData.carsProduction !== lastCount) {
+                    hasChange = true;
+                    SimulationFlow.lastCarsProducedByLine.set(lineKey, oeeData.carsProduction);
+                }
+            }
+        }
+
+        // Emite OEE apenas se houve mudança na produção
+        if (hasChange) {
+            this.callbacks?.onOEECalculated?.(oeeResults);
+        }
+    }
+
+    // Coleta paradas aleatórias (RANDOM_GENERATE) para emissão
+    private getRandomStops(): IStopLine[] {
+        const randomStops: IStopLine[] = [];
+        for (const [id, stop] of this.stops) {
+            if (stop.type === 'RANDOM_GENERATE') {
+                randomStops.push(stop);
+            }
+        }
+        return randomStops;
+    }
+
+    // Emite stops com detalhes (planned e random)
+    private emitStopsWithDetails(): void {
+        const flowPlant = getActiveFlowPlant();
+        const plannedStops = flowPlant.plannedStops || [];
+        const randomStops = this.getRandomStops();
+        this.callbacks?.onStopsWithDetails?.(this.stops, plannedStops, randomStops);
     }
 
     private randomSeverity(): "LOW" | "MEDIUM" | "HIGH" {
@@ -210,14 +520,26 @@ export class SimulationFlow {
 
     // Atualiza status das paradas agendadas (PLANNED -> IN_PROGRESS -> COMPLETED)
     private updateScheduledStops(): void {
-        const simTime = this.getSimTimeMs();
+        const nowTs = this.event.simulatedTimestamp;
 
         for (const [id, stop] of this.stops) {
-            if (stop.status === "PLANNED" && simTime >= stop.startTime) {
+            // Stops de PROPAGATION (NEXT_FULL/PREV_EMPTY) são controladas por startFlowStop/endFlowStop.
+            // Não devem ser encerradas por tempo aqui.
+            if (stop.type === "PROPAGATION") {
+                continue;
+            }
+
+            if (stop.status === "PLANNED" && nowTs >= stop.startTime) {
                 // Verifica se alguma station afetada ainda não recebeu carro
                 if (this.shouldDelayStop(stop)) {
-                    stop.startTime += SimulationFlow.TWO_HOURS_MS;
-                    stop.endTime += SimulationFlow.TWO_HOURS_MS;
+                    // Se por algum motivo a station já ficou marcada como parada, limpa antes de reagendar
+                    this.removeStopFromStations(stop);
+
+                    // Reagenda para daqui 2 horas a partir de AGORA (evita loop quando stop.startTime estava no passado)
+                    const durationMs = stop.durationMs ?? Math.max(0, stop.endTime - stop.startTime);
+                    stop.startTime = nowTs + SimulationFlow.TWO_HOURS_MS;
+                    stop.endTime = stop.startTime + durationMs;
+                    stop.durationMs = durationMs;
                     continue;
                 }
                 stop.status = "IN_PROGRESS";
@@ -235,7 +557,7 @@ export class SimulationFlow {
                 this.callbacks?.onStopStartedStopLine?.(stop);
             }
 
-            if (stop.status === "IN_PROGRESS" && simTime >= stop.endTime) {
+            if (stop.status === "IN_PROGRESS" && nowTs >= stop.endTime) {
                 stop.status = "COMPLETED";
                 this.removeStopFromStations(stop);
                 this.log(`STOP_END: ${stop.shop}/${stop.line}/${stop.station} - ${stop.reason}`);
@@ -257,9 +579,15 @@ export class SimulationFlow {
     private applyStopToStations(stop: IStopLine): void {
         const stations = this.getAffectedStations(stop);
         for (const station of stations) {
+            // Se já existe uma parada de flow na station, encerra antes de aplicar uma parada real (PLANNED/RANDOM)
+            if (stop.type !== "PROPAGATION" && station.isStopped && SimulationFlow.FLOW_REASONS.includes(station.stopReason || "")) {
+                this.endFlowStop(station, "NEXT_FULL");
+            }
+
             station.isStopped = true;
             station.stopReason = stop.reason;
-            station.startStop = stop.startTime;
+            // Station sempre guarda timestamps absolutos (epoch) para evitar confusão com ms desde meia-noite
+            station.startStop = this.event.simulatedTimestamp;
             station.finishStop = stop.endTime;
             station.stopId = stop.id.toString();
         }
@@ -269,10 +597,17 @@ export class SimulationFlow {
     private removeStopFromStations(stop: IStopLine): void {
         const stations = this.getAffectedStations(stop);
         for (const station of stations) {
-            if (station.stopId === stop.id.toString()) {
+            const sameStopId = station.stopId === stop.id.toString();
+            const sameReason = (station.stopReason || "") === (stop.reason || "");
+            const isPropagation = stop.type === "PROPAGATION";
+
+            // Para PLANNED/RANDOM, limpamos também por reason (mais resiliente contra estados inconsistentes)
+            if (sameStopId || (!isPropagation && sameReason)) {
                 station.isStopped = false;
                 station.stopReason = undefined;
                 station.stopId = undefined;
+                station.startStop = 0;
+                station.finishStop = 0;
             }
         }
     }
@@ -289,19 +624,33 @@ export class SimulationFlow {
             return line.stations;
         }
 
-        const station = line.stations.find((s: IStation) => s.id.includes(stop.station));
+        const wantsExactMatch = stop.station.includes("-");
+        const station = wantsExactMatch
+            ? line.stations.find((s: IStation) => s.id === stop.station)
+            : line.stations.find((s: IStation) => s.id.endsWith(`-${stop.station}`));
         return station ? [station] : [];
     }
 
     // Verifica se a parada deve ser atrasada (alguma station ainda não recebeu carro)
     private shouldDelayStop(stop: IStopLine): boolean {
         const stations = this.getAffectedStations(stop);
+
+        // Se a station não existe (config/lookup), não inicia agora
+        if (stations.length === 0) return true;
+
+        // Random failures NUNCA devem iniciar em station sem carro
+        if (stop.type === "RANDOM_GENERATE") {
+            return stations.some(s => !s.occupied || !s.currentCar || s.isStopped);
+        }
+
+        // Regra original: não iniciar paradas planejadas enquanto alguma station ainda não recebeu o primeiro carro
         return stations.some(s => s.isFirstCar === true);
     }
 
     // Cria carros nas stations de início de produção
     private createCarsAtStartStations(): void {
-        const startStations = FlowPlant.stationstartProduction;
+        const flowPlant = getActiveFlowPlant();
+        const startStations = flowPlant.stationstartProduction;
         if (!startStations) return;
 
         const len = startStations.length;
@@ -309,37 +658,77 @@ export class SimulationFlow {
             const config = startStations[i];
             const station = this.getStation(config.shop, config.line, config.station);
             if (!station) continue;
+            
+            // Get line to check if it's a part line
+            const shop = this.shops.get(config.shop);
+            if (!shop) continue;
+            const line = this.getLineFromShop(shop, config.line);
 
             if (!station.occupied && !this.isStationBlocked(station)) {
-                const car = SimulationFlow.carFactory.createRandomCar(
-                    this.event.simulatedTimestamp,
-                    SimulationFlow.dphu
-                );
+                let car: ICar;
+                
+                // Check if this is a part line (has partType)
+                if (line?.partType) {
+                    // Check if this part line has createWith constraint
+                    if (line.createWith) {
+                        // Only create part if there was an exit from the specified station this tick
+                        const exitHappened = this.hasStationExitThisTick(
+                            config.shop,  // Same shop as the part line
+                            line.createWith.line,
+                            line.createWith.station
+                        );
+                        if (!exitHappened) {
+                            // No exit happened, skip creating this part
+                            continue;
+                        }
+                    }
+                    
+                    // Create a part instead of a car
+                    car = SimulationFlow.carFactory.createPart(
+                        this.event.simulatedTimestamp,
+                        line.partType
+                    );
+                    this.log(`PART_CREATED: ${car.id} (${line.partType}) at ${station.id}`);
+                    this.callbacks?.onPartCreated?.(
+                        car.id,
+                        line.partType,
+                        car.model,
+                        station.shop,
+                        station.line,
+                        station.id,
+                        this.event.simulatedTimestamp
+                    );
+                } else {
+                    // Create a normal car
+                    car = SimulationFlow.carFactory.createRandomCar(
+                        this.event.simulatedTimestamp,
+                        SimulationFlow.dphu
+                    );
+                    this.log(`CAR_CREATED: ${car.id} at ${station.id}`);
+                    this.callbacks?.onCarCreated?.(
+                        car.id,
+                        station.shop,
+                        station.line,
+                        station.id,
+                        this.event.simulatedTimestamp
+                    );
+                }
 
-                station.currentCar = car;
-                station.occupied = true;
-                (station as any).carEnteredAt = this.event.simulatedTimestamp;
+                this.cars.push(car);
 
-                car.addTrace({
-                    shop: station.shop,
-                    line: station.line,
-                    station: station.id,
-                    enter: this.event.simulatedTimestamp
-                });
+                // Usa o mesmo caminho de entrada de carro das outras movimentações:
+                // - seta occupied/currentCar/carEnteredAt
+                // - marca isFirstCar=false depois do primeiro carro
+                // - adiciona trace de entrada
+                this.placeCarInStation(station, car);
 
                 car.addShopLeadtime({
                     shop: station.shop,
                     enteredAt: this.event.simulatedTimestamp
                 });
 
-                this.log(`CAR_CREATED: ${car.id} at ${station.id}`);
-                this.callbacks?.onCarCreated?.(
-                    car.id,
-                    station.shop,
-                    station.line,
-                    station.id,
-                    this.event.simulatedTimestamp
-                );
+                // Emite lista completa de carros (estrutura completa) sempre que cria um novo
+                this.emitCarsSnapshot();
             }
         }
     }
@@ -389,8 +778,7 @@ export class SimulationFlow {
         if (!station.isStopped) return false;
 
         // Paradas de flow (NEXT_FULL/PREV_EMPTY) não bloqueiam tentativas
-        const flowReasons = ["NEXT_FULL", "PREV_EMPTY", "Next Full", "Prev Empty"];
-        return !flowReasons.includes(station.stopReason || "");
+        return !SimulationFlow.FLOW_REASONS.includes(station.stopReason || "");
     }
 
     // Tenta puxar carro da station/buffer anterior
@@ -419,7 +807,8 @@ export class SimulationFlow {
     // Tenta puxar do buffer (normal ou rework alternadamente)
     private tryPullFromBuffer(station: IStation, line: ILine, shop: IShop): void {
         // Verifica se é station inicial de produção
-        const startStations = FlowPlant.stationstartProduction;
+        const flowPlant = getActiveFlowPlant();
+        const startStations = flowPlant.stationstartProduction;
         if (startStations) {
             const len = startStations.length;
             for (let i = 0; i < len; i++) {
@@ -466,6 +855,9 @@ export class SimulationFlow {
             station.id,
             this.event.simulatedTimestamp
         );
+
+        // Emite snapshot de carros após movimentação buffer -> station
+        this.emitCarsSnapshot();
         return true;
     }
 
@@ -516,11 +908,24 @@ export class SimulationFlow {
             station.id,
             this.event.simulatedTimestamp
         );
+
+        // Emite snapshot de carros após movimentação rework-buffer -> station
+        this.emitCarsSnapshot();
         return true;
     }
 
     // Coloca carro na station
     private placeCarInStation(station: IStation, car: ICar): void {
+        // Se por algum motivo sobrou estado de parada de flow na station, limpa antes de receber novo carro.
+        // Isso evita station "suja" (isStopped/stopReason/startStop/finishStop) mesmo após StopLine ter sido finalizada.
+        if (station.isStopped && SimulationFlow.FLOW_REASONS.includes(station.stopReason || "")) {
+            station.isStopped = false;
+            station.stopReason = undefined;
+            station.stopId = undefined;
+            station.startStop = 0;
+            station.finishStop = 0;
+        }
+
         station.currentCar = car;
         station.occupied = true;
         (station as any).carEnteredAt = this.event.simulatedTimestamp;
@@ -538,12 +943,148 @@ export class SimulationFlow {
         });
     }
 
+    /**
+     * Validates and consumes required parts for a station before allowing the car to move.
+     * If parts are not available, starts a LACK-{PART} stop.
+     * @param station The station that requires parts
+     * @param line The line configuration
+     * @param car The car that needs parts
+     * @returns true if all parts are available (or no parts required), false if waiting for parts
+     */
+    private validateAndConsumeParts(station: IStation, line: ILine, car: ICar): boolean {
+        // Skip if car is a part (parts don't consume other parts)
+        if (car.isPart) return true;
+        
+        // Skip if line has no required parts
+        if (!line.requiredParts || line.requiredParts.length === 0) return true;
+        
+        // Check if this is the consumption station for any required part
+        const consumptionStation = line.partConsumptionStation || "s1";
+        const isConsumptionStation = station.id.includes(consumptionStation);
+        
+        if (!isConsumptionStation) {
+            // Also check per-part consumeStation
+            const hasPartForThisStation = line.requiredParts.some(rp => 
+                rp.consumeStation && station.id.includes(rp.consumeStation)
+            );
+            if (!hasPartForThisStation) return true;
+        }
+        
+        // Check each required part
+        for (const requiredPart of line.requiredParts) {
+            // Check if this station should consume this part
+            const partConsumeStation = requiredPart.consumeStation || consumptionStation;
+            if (!station.id.includes(partConsumeStation)) continue;
+            
+            // Find the part buffer for this shop and part type
+            const partBufferId = `${station.shop}-PARTS-${requiredPart.partType}`;
+            const partBuffer = this.buffers.get(partBufferId);
+            
+            if (!partBuffer) {
+                // No buffer found - check if there's a part buffer anywhere that feeds this line
+                // This could happen if the part line is in a different shop
+                const altBufferId = this.findPartBufferForLine(station.shop, line.line, requiredPart.partType);
+                if (!altBufferId) {
+                    // Part buffer doesn't exist in config, skip this part requirement
+                    this.log(`WARN: Part buffer not found for ${requiredPart.partType} in ${station.shop}`);
+                    continue;
+                }
+            }
+            
+            const bufferToCheck = partBuffer || this.buffers.get(this.findPartBufferForLine(station.shop, line.line, requiredPart.partType) || "");
+            if (!bufferToCheck) continue;
+            
+            // Check if there's a part available for this car's model
+            const partIndex = bufferToCheck.cars.findIndex(p => p.model === car.model && p.isPart);
+            
+            if (partIndex === -1) {
+                // No part available - start LACK-{PART} stop
+                const lackReason = `LACK-${requiredPart.partType}`;
+                const stationKey = `${station.id}-${requiredPart.partType}`;
+                
+                if (!SimulationFlow.partShortageStations.has(stationKey)) {
+                    SimulationFlow.partShortageStations.set(stationKey, {
+                        partType: requiredPart.partType,
+                        startTime: this.event.simulatedTimestamp
+                    });
+                    
+                    this.startFlowStop(station, lackReason, lackReason);
+                    this.log(`PART_SHORTAGE: ${station.id} waiting for ${requiredPart.partType} (model: ${car.model})`);
+                    
+                    this.callbacks?.onPartShortage?.(
+                        car.id,
+                        requiredPart.partType,
+                        car.model,
+                        station.shop,
+                        station.line,
+                        station.id,
+                        this.event.simulatedTimestamp
+                    );
+                }
+                
+                return false;
+            }
+            
+            // Consume the part
+            const consumedPart = bufferToCheck.cars.splice(partIndex, 1)[0];
+            bufferToCheck.currentCount--;
+            this.updateBufferStatus(bufferToCheck);
+            
+            // End any existing shortage stop for this part type
+            const stationKey = `${station.id}-${requiredPart.partType}`;
+            if (SimulationFlow.partShortageStations.has(stationKey)) {
+                SimulationFlow.partShortageStations.delete(stationKey);
+                this.endFlowStop(station, `LACK-${requiredPart.partType}`);
+            }
+            
+            this.log(`PART_CONSUMED: ${consumedPart.id} (${requiredPart.partType}) for ${car.id} (${car.model}) at ${station.id}`);
+            
+            this.callbacks?.onPartConsumed?.(
+                consumedPart.id,
+                requiredPart.partType,
+                car.model,
+                car.id,
+                station.shop,
+                station.line,
+                station.id,
+                this.event.simulatedTimestamp
+            );
+        }
+        
+        return true;
+    }
+
+    /**
+     * Finds a part buffer that feeds a specific line
+     */
+    private findPartBufferForLine(shopName: string, lineName: string, partType: string): string | undefined {
+        // First try the standard format
+        const standardId = `${shopName}-PARTS-${partType}`;
+        if (this.buffers.has(standardId)) return standardId;
+        
+        // Search for any part buffer of this type that points to this line
+        for (const [bufferId, buffer] of this.buffers) {
+            if (buffer.type === "PART_BUFFER" && bufferId.includes(partType)) {
+                if (buffer.to === `${shopName}-${lineName}` || buffer.to.includes(lineName)) {
+                    return bufferId;
+                }
+            }
+        }
+        
+        return undefined;
+    }
+
     // Tenta enviar carro para próxima station/buffer
     private tryPushCar(station: IStation, line: ILine, shop: IShop): void {
         if (this.isStationBlocked(station)) return;
 
         const car = station.currentCar;
         if (!car) return;
+
+        // Validate and consume required parts before allowing car to proceed
+        if (!this.validateAndConsumeParts(station, line, car)) {
+            return; // Waiting for parts, cannot proceed
+        }
 
         // Última station da linha - envia para buffer
         if (station.isLastStation) {
@@ -614,6 +1155,9 @@ export class SimulationFlow {
             station.id,
             this.event.simulatedTimestamp
         );
+
+        // Emite snapshot de carros após movimentação station -> buffer
+        this.emitCarsSnapshot();
     }
 
     // Envia direto para próxima linha (sem buffer)
@@ -638,6 +1182,9 @@ export class SimulationFlow {
 
         this.placeCarInStation(nextStation, car);
         this.log(`MOVE: ${car.id} from ${station.id} to ${nextStation.id}`);
+
+        // Emite snapshot de carros após movimentação station -> station (sem buffer)
+        this.emitCarsSnapshot();
     }
 
     // Envia carro para rework
@@ -681,6 +1228,9 @@ export class SimulationFlow {
             defectId,
             this.event.simulatedTimestamp
         );
+
+        // Emite snapshot de carros após movimentação station -> rework-buffer
+        this.emitCarsSnapshot();
     }
 
     // Finaliza carro (última station da planta)
@@ -749,13 +1299,32 @@ export class SimulationFlow {
             to.id,
             this.event.simulatedTimestamp
         );
+
+        // Emite snapshot de carros após movimentação station -> station
+        this.emitCarsSnapshot();
     }
 
     // Remove carro da station
     private removeCarFromStation(station: IStation): void {
+        // Track station exit for createWith feature
+        // Extract the simple station id (e.g., "s1" from "Body-BodyMain-s1")
+        const parts = station.id.split('-');
+        const simpleStationId = parts[parts.length - 1];
+        const exitKey = `${station.shop}-${station.line}-${simpleStationId}`;
+        SimulationFlow.stationExitThisTick.add(exitKey);
+        
         station.currentCar = null;
         station.occupied = false;
         (station as any).carEnteredAt = undefined;
+    }
+
+    /**
+     * Checks if a car exited from a specific station this tick.
+     * Used by createWith to synchronize part creation with car production.
+     */
+    private hasStationExitThisTick(shopName: string, lineName: string, stationId: string): boolean {
+        const exitKey = `${shopName}-${lineName}-${stationId}`;
+        return SimulationFlow.stationExitThisTick.has(exitKey);
     }
 
     // Atualiza leadtime do shop no carro
@@ -835,7 +1404,9 @@ export class SimulationFlow {
         }
 
         station.isStopped = false;
-        station.finishStop = this.event.simulatedTimestamp;
+        // Para flow stops não mantemos timestamps na station (evita ficar "sujo" após encerrar)
+        station.startStop = 0;
+        station.finishStop = 0;
         station.stopReason = undefined;
         station.stopId = undefined;
     }
@@ -876,7 +1447,8 @@ export class SimulationFlow {
     }
 
     private getRouteForStation(shopName: string, lineName: string, stationId: string): any {
-        const shopConfig = (FlowPlant.shops as any)[shopName];
+        const flowPlant = getActiveFlowPlant();
+        const shopConfig = (flowPlant.shops as any)[shopName];
         if (!shopConfig) return null;
 
         const lineConfig = shopConfig.lines[lineName];
