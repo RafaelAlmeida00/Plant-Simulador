@@ -58,7 +58,7 @@ import { IFlowPlant } from "../../utils/shared";
 
 export const FlowPlant: IFlowPlant = {
 
-  typeSpeedFactor: 10,
+  typeSpeedFactor: 1,
   stationTaktMinFraction: 0.7,
   stationTaktMaxFraction: 0.999,
   stationstartProduction: [
