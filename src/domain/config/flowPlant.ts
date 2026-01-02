@@ -1,8 +1,64 @@
 import { IFlowPlant } from "../../utils/shared";
 
+/**
+ * ============================================================================
+ * CONFIGURAÇÃO DA PLANTA DE PRODUÇÃO (FlowPlant)
+ * ============================================================================
+ * 
+ * Este arquivo define toda a estrutura da planta de produção, incluindo:
+ * - Shops (áreas da fábrica)
+ * - Linhas de produção (normais e de peças)
+ * - Buffers entre linhas
+ * - Rotas de fluxo de carros
+ * - Paradas planejadas
+ * 
+ * ============================================================================
+ * TIPOS DE LINHAS:
+ * ============================================================================
+ * 
+ * 1. LINHAS NORMAIS (Car Lines):
+ *    - Produzem ou processam CARROS
+ *    - TÊM routes: definem para onde o carro vai quando sai da linha
+ *    - TÊM buffers: buffers entre esta linha e a próxima
+ *    - PODEM ter requiredParts: peças que precisam consumir para operar
+ *    - Exemplo: BodyMain, MetalLine, Paint_In, Trim_A, etc.
+ * 
+ * 2. LINHAS DE PEÇAS (Part Lines):
+ *    - Produzem PEÇAS que serão consumidas por outras linhas
+ *    - TÊM partType: define o tipo de peça produzida (ex: "COVER", "DOORS")
+ *    - NÃO TÊM routes: peças vão APENAS para o Part Buffer correspondente
+ *    - TÊM buffers: aponta para a linha que consumirá as peças (informativo)
+ *    - O Part Buffer é criado automaticamente: {Shop}-PARTS-{partType}
+ *    - PODEM ter createWith: sincroniza criação de peças com outra linha
+ *    - Exemplo: CoverHemming, DoorLine, CylinderHead, ShortLine, etc.
+ * 
+ * ============================================================================
+ * CONSUMO DE PEÇAS:
+ * ============================================================================
+ * 
+ * Para uma linha consumir peças, ela precisa:
+ * 1. requiredParts: array com { partType: "TIPO", consumeStation: "s1" }
+ * 2. partConsumptionStation: estação onde o consumo acontece (default: "s1")
+ * 
+ * O carro SÓ pode ser criado/avançar se existir peça do mesmo modelo no buffer.
+ * Se não houver peça, ocorre parada LACK-{partType}.
+ * 
+ * ============================================================================
+ * IMPORTANTE - REGRAS DE CONFIGURAÇÃO:
+ * ============================================================================
+ * 
+ * ❌ ERRADO: Part Line com routes (peças seguirão fluxo de carro)
+ *    { partType: "COVER", routes: [{ fromStation: "s17", to: [...] }] }
+ * 
+ * ✅ CORRETO: Part Line sem routes (peças vão apenas para Part Buffer)
+ *    { partType: "COVER", buffers: [{ to: { shop: "Body", line: "MetalLine" }, capacity: 20 }] }
+ * 
+ * ============================================================================
+ */
+
 export const FlowPlant: IFlowPlant = {
 
-  typeSpeedFactor: 1,
+  typeSpeedFactor: 10,
   stationTaktMinFraction: 0.7,
   stationTaktMaxFraction: 0.999,
   stationstartProduction: [
@@ -125,31 +181,30 @@ export const FlowPlant: IFlowPlant = {
       bufferCapacity: 5000,
       reworkBuffer: 1000,
       lines: {
-        // CylinderHead - linha independente que alimenta ShortLine na s6
+        // =====================================================================
+        // PART LINES (Linhas de Peças) - NÃO têm routes, peças vão para Part Buffer
+        // =====================================================================
+        
+        // CylinderHead - produz peças CYLINDER_HEAD consumidas pela ShortLine
         "CylinderHead": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6"],
           takt: { jph: 28, leadtime: 6 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "CYLINDER_HEAD",
+          partType: "CYLINDER_HEAD",  // Esta é uma Part Line
           buffers: [
             { to: { shop: "PWT", line: "ShortLine" }, capacity: 30 }
-          ],
-          routes: [
-            {
-              fromStation: "s6",
-              to: [{ shop: "PWT", line: "ShortLine", station: "s6" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para PWT-PARTS-CYLINDER_HEAD
         },
 
-        // ShortLine - primeira linha do motor, nasce o motor na s1
+        // ShortLine - produz peças ENGINE, consome CYLINDER_HEAD na s6
         "ShortLine": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6"],
           takt: { jph: 28, leadtime: 6 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "ENGINE",
+          partType: "ENGINE",  // Esta é uma Part Line
           requiredParts: [
             { partType: "CYLINDER_HEAD", consumeStation: "s6" }
           ],
@@ -164,13 +219,13 @@ export const FlowPlant: IFlowPlant = {
           ]
         },
 
-        // BareLine - 10 stations
+        // BareLine - processa peças ENGINE (10 stations)
         "BareLine": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"],
           takt: { jph: 28, leadtime: 10 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "ENGINE",
+          partType: "ENGINE",  // Esta é uma Part Line
           buffers: [
             { to: { shop: "PWT", line: "MainLine" }, capacity: 1 }
           ],
@@ -182,13 +237,13 @@ export const FlowPlant: IFlowPlant = {
           ]
         },
 
-        // MainLine - 15 stations
+        // MainLine - processa peças ENGINE (15 stations)
         "MainLine": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15"],
           takt: { jph: 28, leadtime: 15 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "ENGINE",
+          partType: "ENGINE",  // Esta é uma Part Line
           buffers: [
             { to: { shop: "PWT", line: "FTB" }, capacity: 1 }
           ],
@@ -200,22 +255,17 @@ export const FlowPlant: IFlowPlant = {
           ]
         },
 
-        // FTB - Final Test Bench - 4 stations, cai no buffer do shop
+        // FTB - Final Test Bench (última linha de ENGINE antes de ir para Trim_B)
         "FTB": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4"],
           takt: { jph: 28, leadtime: 4 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "ENGINE",
-           buffers: [
+          partType: "ENGINE",  // Esta é uma Part Line
+          buffers: [
             { to: { shop: "Trim", line: "Trim_B" }, capacity: 5000 }
-          ],
-          routes: [
-            {
-              fromStation: "s4",
-              to: [{ shop: "Trim", line: "Trim_B", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Trim-PARTS-ENGINE
         }
       },
       name: "PWT"
@@ -228,119 +278,93 @@ export const FlowPlant: IFlowPlant = {
       bufferCapacity: 100,
       reworkBuffer: 30,
       lines: {
-        // === LINHAS DE PEÇAS (Part Lines) ===
+        // =====================================================================
+        // PART LINES (Linhas de Peças) - NÃO têm routes, peças vão para Part Buffer
+        // =====================================================================
 
-        // EngComp - Engine Compartment
+        // EngComp - produz peças ENGINE_COMPARTMENT consumidas pela BodyMain
         "EngComp": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"],
           takt: { jph: 28, leadtime: 10 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "ENGINE_COMPARTMENT",
-           buffers: [
+          partType: "ENGINE_COMPARTMENT",  // Esta é uma Part Line
+          buffers: [
             { to: { shop: "Body", line: "BodyMain" }, capacity: 20 }
-          ],
-          routes: [
-            {
-              fromStation: "s10",
-              to: [{ shop: "Body", line: "BodyMain", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Body-PARTS-ENGINE_COMPARTMENT
         },
 
-        // FrontFloor - Assoalho Dianteiro
+        // FrontFloor - produz peças FRONT_FLOOR consumidas pela BodyMain
         "FrontFloor": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"],
           takt: { jph: 28, leadtime: 10 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "FRONT_FLOOR",
-           buffers: [
+          partType: "FRONT_FLOOR",  // Esta é uma Part Line
+          buffers: [
             { to: { shop: "Body", line: "BodyMain" }, capacity: 20 }
-          ],
-          routes: [
-            {
-              fromStation: "s10",
-              to: [{ shop: "Body", line: "BodyMain", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Body-PARTS-FRONT_FLOOR
         },
 
-        // RearFloor - Assoalho Traseiro
+        // RearFloor - produz peças REAR_FLOOR consumidas pela BodyMain
         "RearFloor": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"],
           takt: { jph: 28, leadtime: 10 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "REAR_FLOOR",
+          partType: "REAR_FLOOR",  // Esta é uma Part Line
           buffers: [
             { to: { shop: "Body", line: "BodyMain" }, capacity: 20 }
-          ],
-          routes: [
-            {
-              fromStation: "s10",
-              to: [{ shop: "Body", line: "BodyMain", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Body-PARTS-REAR_FLOOR
         },
 
-        // BodySideRH - Lateral Direita (portas)
+        // BodySideRH - produz peças BODY_SIDE_RH consumidas pela BodyMain
         "BodySideRH": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12"],
           takt: { jph: 28, leadtime: 12 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "BODY_SIDE_RH",
+          partType: "BODY_SIDE_RH",  // Esta é uma Part Line
           buffers: [
             { to: { shop: "Body", line: "BodyMain" }, capacity: 20 }
-          ],
-          routes: [
-            {
-              fromStation: "s12",
-              to: [{ shop: "Body", line: "BodyMain", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Body-PARTS-BODY_SIDE_RH
         },
 
-        // BodySideLH - Lateral Esquerda (portas)
+        // BodySideLH - produz peças BODY_SIDE_LH consumidas pela BodyMain
         "BodySideLH": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12"],
           takt: { jph: 28, leadtime: 12 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "BODY_SIDE_LH",
-         buffers: [
+          partType: "BODY_SIDE_LH",  // Esta é uma Part Line
+          buffers: [
             { to: { shop: "Body", line: "BodyMain" }, capacity: 20 }
-          ],
-          routes: [
-            {
-              fromStation: "s12",
-              to: [{ shop: "Body", line: "BodyMain", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Body-PARTS-BODY_SIDE_LH
         },
 
-        // CoverHemming - Cover (consumido pela MetalLine)
+        // CoverHemming - produz peças COVER consumidas pela MetalLine
         "CoverHemming": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15", "s16", "s17"],
           takt: { jph: 28, leadtime: 17 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "COVER",
-           buffers: [
+          partType: "COVER",  // Esta é uma Part Line
+          buffers: [
             { to: { shop: "Body", line: "MetalLine" }, capacity: 20 }
-          ],
-          routes: [
-            {
-              fromStation: "s17",
-              to: [{ shop: "Body", line: "MetalLine", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Body-PARTS-COVER
         },
 
-        // === LINHAS NORMAIS (Carros) ===
+        // =====================================================================
+        // CAR LINES (Linhas Normais) - TÊM routes para definir fluxo de carros
+        // =====================================================================
 
-        // BodyMain - Linha principal onde o carro nasce e consome peças
+        // BodyMain - Linha principal onde o carro NASCE e consome peças na s1
         "BodyMain": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
@@ -518,28 +542,27 @@ export const FlowPlant: IFlowPlant = {
       bufferCapacity: 60,
       reworkBuffer: 30,
       lines: {
-        // === LINHA DE PEÇAS ===
+        // =====================================================================
+        // PART LINES (Linhas de Peças) - NÃO têm routes, peças vão para Part Buffer
+        // =====================================================================
 
-        // DoorLine - Linha de montagem de portas (1 peça = 2 portas)
+        // DoorLine - produz peças DOORS consumidas pela C3 (createWith = sincroniza com Paint_Out)
         "DoorLine": {
           MTTR: Math.random() * 10 + 2,
           MTBF: Math.random() * 100 + 20,
           stations: ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13"],
           takt: { jph: 28, leadtime: 13 / 28, shiftStart: "07:00", shiftEnd: "23:48" },
-          partType: "DOORS",
-          createWith: { line: "Paint_Out", station: "s1" },
-           buffers: [
+          partType: "DOORS",  // Esta é uma Part Line
+          createWith: { line: "Paint_Out", station: "s1" },  // Sincroniza criação com saída de Paint_Out
+          buffers: [
             { to: { shop: "Trim", line: "C3" }, capacity: 50 }
-          ],
-          routes: [
-            {
-              fromStation: "s13",
-              to: [{ shop: "Trim", line: "C3", station: "s1" }]
-            }
           ]
+          // NÃO tem routes - peças vão automaticamente para Trim-PARTS-DOORS
         },
 
-        // === LINHAS NORMAIS ===
+        // =====================================================================
+        // CAR LINES (Linhas Normais) - TÊM routes para definir fluxo de carros
+        // =====================================================================
 
         "Trim_A": {
           MTTR: Math.random() * 10 + 2,

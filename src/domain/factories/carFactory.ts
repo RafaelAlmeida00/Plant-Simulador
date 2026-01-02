@@ -62,6 +62,31 @@ export class CarFactory {
         });
     }
 
+    /**
+     * Cria um carro com um modelo específico (usado quando precisamos garantir match de peças)
+     * @param currentSimulatorTime O tempo atual do relógio do simulador
+     * @param dphu Target de defeitos por 100 unidades
+     * @param model O modelo específico do carro
+     */
+    public createCarWithModel(currentSimulatorTime: number, dphu: number, model: string): Car {
+        this.currentSequence++;
+
+        return new Car({
+            id: this.generateId(),
+            sequenceNumber: this.currentSequence,
+            model: model,
+            color: this.getRandomColor(),
+            createdAt: currentSimulatorTime,
+            hasDefect: Math.random() * 100 < dphu,
+            inRework: false,
+            trace: [],
+            shopLeadtimes: [],
+            defects: [],
+            isPart: false,
+            partName: undefined
+        });
+    }
+
     private generateId(): string {
         // ID incremental com prefixo para unicidade - mais rápido que Math.random().toString(36)
         return `C${++this.idCounter}`;
@@ -72,7 +97,7 @@ export class CarFactory {
         return `PART-${partType}-${++this.partIdCounter}`;
     }
 
-    private getRandomModel(): string {
+    public getRandomModel(): string {
         return CarFactory.models[(Math.random() * CarFactory.modelsLen) | 0];
     }
 

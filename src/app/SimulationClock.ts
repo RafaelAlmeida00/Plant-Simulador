@@ -50,7 +50,8 @@ export class SimulationClock implements ISimulationClock {
 
   private createInitialTimestamp(): number {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), this.START_HOUR, this.START_MINUTE, 0, 0).getTime();
+    // Usa UTC para garantir consistência entre servidores com diferentes timezones
+    return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), this.START_HOUR, this.START_MINUTE, 0, 0);
   }
 
   get state(): ClockState {
@@ -78,27 +79,33 @@ export class SimulationClock implements ISimulationClock {
   }
 
   public getSimulatedHour(): number {
-    return new Date(this._simulatedTimestamp).getHours();
+    return new Date(this._simulatedTimestamp).getUTCHours();
   }
 
   public getSimulatedMinute(): number {
-    return new Date(this._simulatedTimestamp).getMinutes();
+    return new Date(this._simulatedTimestamp).getUTCMinutes();
   }
 
   public getSimulatedSecond(): number {
-    return new Date(this._simulatedTimestamp).getSeconds();
+    return new Date(this._simulatedTimestamp).getUTCSeconds();
   }
 
   public getSimulatedTimeString(): string {
     const d = new Date(this._simulatedTimestamp);
-    const h = d.getHours();
-    const m = d.getMinutes();
-    const s = d.getSeconds();
+    // Usa UTC para consistência entre servidores
+    const h = d.getUTCHours();
+    const m = d.getUTCMinutes();
+    const s = d.getUTCSeconds();
     return `${h < 10 ? '0' : ''}${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
   }
 
   public getSimulatedDateString(): string {
-    return new Date(this._simulatedTimestamp).toLocaleDateString("pt-BR");
+    // Usa UTC para consistência entre servidores
+    const d = new Date(this._simulatedTimestamp);
+    const day = d.getUTCDate().toString().padStart(2, '0');
+    const month = (d.getUTCMonth() + 1).toString().padStart(2, '0');
+    const year = d.getUTCFullYear();
+    return `${day}/${month}/${year}`;
   }
 
   public start(): void {

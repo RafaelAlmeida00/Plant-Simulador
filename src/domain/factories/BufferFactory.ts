@@ -23,13 +23,25 @@ export class BufferFactory {
                     for (let j = 0; j < buffersLen; j++) {
                         const bufferConfig = lineConfig.buffers[j];
                         
-                        // Check if this is a part line buffer (line has partType)
-                        const isPartBuffer = !!lineConfig.partType;
+                        // Check if this is a part line (has partType)
+                        const isPartLine = !!lineConfig.partType;
                         const partType = lineConfig.partType;
                         
-                        // Buffer ID format: {Shop}-PARTS-{partType} for part buffers, otherwise normal format
-                        const bufferId = isPartBuffer 
-                            ? `${shopName}-PARTS-${partType}`
+                        // =====================================================================
+                        // BUFFER TYPE DETERMINATION:
+                        // - Part Line WITH routes = intermediate part line → uses normal buffer
+                        // - Part Line WITHOUT routes = final part line → uses Part Buffer
+                        // - Car Line = always uses normal buffer
+                        // =====================================================================
+                        const hasRoutes = lineConfig.routes && lineConfig.routes.length > 0;
+                        const isFinalPartBuffer = isPartLine && !hasRoutes;
+                        
+                        // Buffer ID format:
+                        // - Final Part Line (no routes): {DestShop}-PARTS-{partType}
+                        // - Intermediate Part Line (has routes): normal buffer format
+                        // - Car Line: normal buffer format
+                        const bufferId = isFinalPartBuffer 
+                            ? `${bufferConfig.to.shop}-PARTS-${partType}`
                             : `${shopName}-${lineName}-to-${bufferConfig.to.shop}-${bufferConfig.to.line}`;
                         
                         const buffer = new Buffer({
@@ -40,7 +52,7 @@ export class BufferFactory {
                             capacity: bufferConfig.capacity,
                             currentCount: 0,
                             cars: [],
-                            type: isPartBuffer ? "PART_BUFFER" : "BUFFER",
+                            type: isFinalPartBuffer ? "PART_BUFFER" : "BUFFER",
                             status: "EMPTY"
                         });
                         this.buffers.set(bufferId, buffer);
