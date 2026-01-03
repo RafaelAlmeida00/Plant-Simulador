@@ -87,6 +87,13 @@ export class StopLineFactory {
         }
     }
 
+    private getShiftStartMs(lineConfig: any): number {
+        const shiftStart = lineConfig.takt.shiftStart;
+        const startHour = parseInt(shiftStart.substring(0, 2), 10);
+        const startMinute = parseInt(shiftStart.substring(3, 5), 10);
+        return (startHour * 60 + startMinute) * 60000;
+    }
+
     private createRandomStops(): void {
         const flowPlant = getActiveFlowPlant();
         const flowPlantShopsEntries: [string, any][] = Object.entries(flowPlant.shops);
@@ -103,7 +110,8 @@ export class StopLineFactory {
                 if (numStops <= 0) continue;
 
                 const stations = lineConfig.stations;
-                const rawStops = this.generateRawStops(shopName, lineName, stations, numStops, productionTimeMinutes);
+                const shiftStartMs = this.getShiftStartMs(lineConfig);
+                const rawStops = this.generateRawStops(shopName, lineName, stations, numStops, productionTimeMinutes, shiftStartMs);
                 
                 this.adjustDurationsToMTTR(rawStops, mttrMinutes);
 
@@ -122,14 +130,16 @@ export class StopLineFactory {
         lineName: string,
         stations: string[],
         numStops: number,
-        productionTimeMinutes: number
+        productionTimeMinutes: number,
+        shiftStartMs: number
     ): IStopLine[] {
         const rawStops: IStopLine[] = [];
         const productionTimeMs = productionTimeMinutes * 60 * 1000;
 
         for (let i = 0; i < numStops; i++) {
             const randomStation = stations[Math.floor(Math.random() * stations.length)];
-            const startTime = Math.floor(Math.random() * productionTimeMs);
+            const randomOffset = this.distributeStopTime(productionTimeMs, numStops, i);
+            const startTime = shiftStartMs + randomOffset;
             const severity = this.randomSeverity();
             const durationMs = this.randomDurationBySeverity(severity);
 
@@ -150,6 +160,17 @@ export class StopLineFactory {
         }
 
         return rawStops;
+    }
+
+    private distributeStopTime(productionTimeMs: number, totalStops: number, stopIndex: number): number {
+        // Divide o período de produção em segmentos iguais para cada parada
+        const segmentSize = productionTimeMs / totalStops;
+        // Calcula o início do segmento para esta parada
+        const segmentStart = segmentSize * stopIndex;
+        // Adiciona uma variação aleatória dentro do segmento (0% a 100% do segmento)
+        const randomVariation = Math.random() * segmentSize;
+        // Retorna a posição final dentro do período de produção
+        return Math.floor(segmentStart + randomVariation);
     }
 
     private randomSeverity(): "LOW" | "MEDIUM" | "HIGH" {

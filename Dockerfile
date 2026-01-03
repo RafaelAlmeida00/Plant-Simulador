@@ -19,6 +19,10 @@ FROM node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
+# Set timezone to Brazil (UTC-3)
+ENV TZ=America/Sao_Paulo
+RUN apk add --no-cache tzdata
+
 # Render injeta PORT em runtime; default permanece 3000
 ENV PORT=3000
 
