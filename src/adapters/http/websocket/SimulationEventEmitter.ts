@@ -30,10 +30,13 @@ export class SimulationEventEmitter {
     private mttrmtbfRepo: MTTRMTBFRepository;
     private persistEnabled: boolean = true;
     private lastBufferEmit: number = 0;
+    private lastBufferPersist: number = 0; // Controle separado para persistência de buffers
     private lastPlantEmit: number = 0;
     private lastStopsEmit: number = 0;
     private lastOEEEmit: number = 0;
-    private readonly BUFFER_EMIT_INTERVAL = 5000; // 5 segundos
+    private pendingOEEData: OEEData[] | null = null; // Guarda último OEE para não perder
+    private readonly BUFFER_EMIT_INTERVAL = 5000; // 5 segundos (WebSocket)
+    private readonly BUFFER_PERSIST_INTERVAL = 60 * 60 * 1000; // 1 hora (Banco de dados)
     private readonly PLANT_EMIT_INTERVAL = 10000; // 10 segundos
     private readonly STOPS_EMIT_INTERVAL = 5000; // 5 segundos
     private readonly OEE_EMIT_INTERVAL = 1000; // 1 segundo
@@ -343,14 +346,16 @@ export class SimulationEventEmitter {
     // Emite estado atual de todos os buffers
     public async emitAllBuffers(buffers: Map<string, IBuffer>, timestamp: number): Promise<void> {
         const now = Date.now();
-        if (now - this.lastBufferEmit < this.BUFFER_EMIT_INTERVAL) {
-            return;
+        
+        // Emissão WebSocket: a cada 5 segundos
+        if (now - this.lastBufferEmit >= this.BUFFER_EMIT_INTERVAL) {
+            this.lastBufferEmit = now;
+            socketServer.emitAllBuffers(buffers);
         }
-        this.lastBufferEmit = now;
 
-        socketServer.emitAllBuffers(buffers);
-
-        if (this.persistEnabled) {
+        // Persistência em banco: a cada 1 hora (evita volume excessivo)
+        if (this.persistEnabled && (now - this.lastBufferPersist >= this.BUFFER_PERSIST_INTERVAL)) {
+            this.lastBufferPersist = now;
             try {
                 for (const [id, buffer] of buffers) {
                     await this.bufferStateRepo.create({
@@ -365,6 +370,7 @@ export class SimulationEventEmitter {
                         timestamp
                     });
                 }
+                console.log(`[EVENT_EMITTER] Buffer states persisted at ${new Date(now).toISOString()}`);
             } catch (error) {
                 console.error('[EVENT_EMITTER] Error persisting buffer states:', error);
             }
@@ -416,11 +422,29 @@ export class SimulationEventEmitter {
     // Emite OEE em tempo real via WebSocket
     public emitOEE(oeeData: OEEData[]): void {
         const now = Date.now();
+        
+        // Sempre guarda o último OEE recebido
+        this.pendingOEEData = oeeData;
+        
+        // Verifica se pode emitir (throttle)
         if (now - this.lastOEEEmit < this.OEE_EMIT_INTERVAL) {
             return;
         }
+        
+        // Emite e limpa o pending
         this.lastOEEEmit = now;
-        socketServer.emitOEE(oeeData);
+        if (this.pendingOEEData) {
+            socketServer.emitOEE(this.pendingOEEData);
+            this.pendingOEEData = null;
+        }
+    }
+
+    // Força emissão do OEE pendente (útil para novos clientes)
+    public flushPendingOEE(): void {
+        if (this.pendingOEEData) {
+            socketServer.emitOEE(this.pendingOEEData);
+            this.lastOEEEmit = Date.now();
+        }
     }
 
     // Persiste OEE no banco de dados (chamado no fim do turno)

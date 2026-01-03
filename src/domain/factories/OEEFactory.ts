@@ -35,8 +35,8 @@ export class OEEFactory {
         const simDate = new Date(input.simulatedTimestamp);
         const dateStr = simDate.toISOString().split('T')[0];
 
-        // Calcula o shiftStart e shiftEnd em timestamp para o dia
-        const dayStart = new Date(simDate.getFullYear(), simDate.getMonth(), simDate.getDate(), 0, 0, 0, 0).getTime();
+        // Calcula o shiftStart e shiftEnd em timestamp para o dia (usando UTC para consistência)
+        const dayStart = Date.UTC(simDate.getUTCFullYear(), simDate.getUTCMonth(), simDate.getUTCDate(), 0, 0, 0, 0);
         const [startHour, startMinute] = input.shiftStart.split(':').map(Number);
         const shiftStartTs = dayStart + (startHour * 60 + startMinute) * 60 * 1000;
 

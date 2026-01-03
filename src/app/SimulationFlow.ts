@@ -50,6 +50,9 @@ export class SimulationFlow {
     private static lastCarsProducedByLine: Map<string, number> = new Map();
     // Tracking para saber se já calculou OEE no shiftend (evita duplicação)
     private static oeeCalculatedForShift: Map<string, string> = new Map();
+    // Contador de ticks desde última emissão de OEE (para emissão periódica)
+    private static ticksSinceLastOEEEmit: number = 0;
+    private static readonly OEE_EMIT_INTERVAL_TICKS: number = 30; // Emite a cada 30 ticks (~30 segundos sim)
 
     private static readonly FLOW_REASONS: ReadonlyArray<string> = [
         "NEXT_FULL",
@@ -73,6 +76,7 @@ export class SimulationFlow {
         SimulationFlow.oeeCalculatedForShift.clear();
         SimulationFlow.partShortageStations.clear();
         SimulationFlow.stationExitThisTick.clear();
+        SimulationFlow.ticksSinceLastOEEEmit = 0;
     }
 
     constructor(context: FlowContext) {
@@ -473,18 +477,23 @@ export class SimulationFlow {
 
                 oeeResults.push(oeeData);
 
-                // Verifica se houve mudança na produção
-                const lastCount = SimulationFlow.lastCarsProducedByLine.get(lineKey) || 0;
-                if (oeeData.carsProduction !== lastCount) {
+                // Verifica se houve mudança na produção OU se é a primeira vez
+                const lastCount = SimulationFlow.lastCarsProducedByLine.get(lineKey);
+                if (lastCount === undefined || oeeData.carsProduction !== lastCount) {
                     hasChange = true;
                     SimulationFlow.lastCarsProducedByLine.set(lineKey, oeeData.carsProduction);
                 }
             }
         }
 
-        // Emite OEE apenas se houve mudança na produção
-        if (hasChange) {
+        // Incrementa contador de ticks
+        SimulationFlow.ticksSinceLastOEEEmit++;
+
+        // Emite OEE se houve mudança OU a cada intervalo (para manter clientes atualizados)
+        const shouldEmitPeriodic = SimulationFlow.ticksSinceLastOEEEmit >= SimulationFlow.OEE_EMIT_INTERVAL_TICKS;
+        if (hasChange || shouldEmitPeriodic) {
             this.callbacks?.onOEECalculated?.(oeeResults);
+            SimulationFlow.ticksSinceLastOEEEmit = 0;
         }
     }
 
