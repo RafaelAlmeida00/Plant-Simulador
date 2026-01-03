@@ -47,12 +47,19 @@ import { IFlowPlant } from "../../utils/shared";
  * IMPORTANTE - REGRAS DE CONFIGURAÇÃO:
  * ============================================================================
  * 
- * ❌ ERRADO: Part Line com routes (peças seguirão fluxo de carro)
+ * ❌ ERRADO: Part Line Final com routes (peças seguirão fluxo de carro)
  *    { partType: "COVER", routes: [{ fromStation: "s17", to: [...] }] }
  * 
- * ✅ CORRETO: Part Line sem routes (peças vão apenas para Part Buffer)
+ * ✅ CORRETO: Part Line Final sem routes (peças vão apenas para Part Buffer)
  *    { partType: "COVER", buffers: [{ to: { shop: "Body", line: "MetalLine" }, capacity: 20 }] }
  * 
+ *  * ❌ ERRADO: Part Line de nascimento ou intermedia sem routes (peças seguirão fluxo de carro)
+ *    { partType: "COVER", buffers: [{ to: { shop: "Body", line: "MetalLine" }, capacity: 20 }] }
+ * 
+ * ✅ CORRETO: Part Line de nascimento ou intermedia sem routes com routes (peças vão apenas para Part Buffer)
+ *    { partType: "COVER", routes: [{ fromStation: "s17", to: [...] }] }
+
+*   TODA LINE CAR NORMAL TEM ROUTER E BUFFER 
  * ============================================================================
  */
 

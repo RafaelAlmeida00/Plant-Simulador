@@ -58,6 +58,7 @@ export class SimulationFlow {
         "Prev Empty",
         "Buffer Empty",
         "Buffer Full",
+        "Part Buffer Full",
         "Rework Full"
     ];
 
@@ -1698,7 +1699,7 @@ export class SimulationFlow {
 
     // Finaliza parada de flow e atualiza StopLine
     private endFlowStop(station: IStation, type: string): void {
-        const flowReasons = ["NEXT_FULL", "PREV_EMPTY", "Next Full", "Prev Empty", "Buffer Empty", "Buffer Full", "Rework Full"];
+        const flowReasons = ["NEXT_FULL", "PREV_EMPTY", "Next Full", "Prev Empty", "Buffer Empty", "Buffer Full", "Part Buffer Full", "Rework Full"];
         const stopReason = station.stopReason || "";
         
         // Check if it's a flow reason OR a LACK-* reason (part shortage)
