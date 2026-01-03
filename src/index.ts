@@ -2,10 +2,15 @@ import { Server } from "./adapters/http/server";
 import { SimulationFactory } from "./domain/factories/SimulationFactory";
 import { simulationEventEmitter } from "./adapters/http/websocket/SimulationEventEmitter";
 import { socketServer } from "./adapters/http/websocket/SocketServer";
+import { DatabaseFactory } from "./adapters/database/DatabaseFactory";
 
 const serverStartTime = Date.now();
 
 export async function StartSimulation() {
+    // Garante que o banco esteja conectado e com tabelas criadas antes de iniciar
+    // qualquer tick/persistência/evento da simulação.
+    await DatabaseFactory.getDatabase();
+
     const simulation = SimulationFactory.create({
         onTick: (event, state) => {
             // Health a cada tick
@@ -78,6 +83,9 @@ export async function StartSimulation() {
 }
 
 async function main(): Promise<void> {
+    // Primeiro processo do boot: banco (inclui criação de tabelas via connect()).
+    await DatabaseFactory.getDatabase();
+
     const server = new Server();
     const simulation = await StartSimulation();
 

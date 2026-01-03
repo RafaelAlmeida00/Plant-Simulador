@@ -7,6 +7,7 @@ import { ICar } from '../../../domain/models/Car';
 import { IStopLine } from '../../../domain/models/StopLine';
 import { PlantSnapshot } from '../../../domain/services/PlantQueryService';
 import { SimulationClock } from '../../../app/SimulationClock';
+import { DatabaseFactory } from '../../database/DatabaseFactory';
 
 export type SimulatorAction = 'pause' | 'restart' | 'stop' | 'start';
 
@@ -86,7 +87,7 @@ export class SocketServer {
 
             // Handler para controle da simulação via WebSocket
             socket.on('controlSimulator', (message: ControlSimulatorMessage) => {
-                this.handleSimulatorControl(socket, message);
+                void this.handleSimulatorControl(socket, message);
             });
 
             socket.on('disconnect', () => {
@@ -96,7 +97,7 @@ export class SocketServer {
     }
 
     // Processa comandos de controle da simulação
-    private handleSimulatorControl(socket: Socket, message: ControlSimulatorMessage): void {
+    private async handleSimulatorControl(socket: Socket, message: ControlSimulatorMessage): Promise<void> {
         if (!this.simulator) {
             socket.emit('controlSimulator', {
                 success: false,
@@ -127,6 +128,8 @@ export class SocketServer {
                     console.log(`[SOCKET] Simulator paused by client ${socket.id}`);
                     break;
                 case 'restart':
+                    // Garante que o banco (e tabelas) esteja pronto antes do restart.
+                    await DatabaseFactory.getDatabase();
                     this.simulator.restart();
                     console.log(`[SOCKET] Simulator restarted by client ${socket.id}`);
                     break;
@@ -140,6 +143,8 @@ export class SocketServer {
                         this.simulator.resume();
                         console.log(`[SOCKET] Simulator resumed by client ${socket.id}`);
                     } else if (this.simulator.state === 'stopped') {
+                        // Garante que o banco (e tabelas) esteja pronto antes do start.
+                        await DatabaseFactory.getDatabase();
                         this.simulator.start();
                         console.log(`[SOCKET] Simulator started by client ${socket.id}`);
                     } else {
