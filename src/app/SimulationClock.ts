@@ -27,7 +27,7 @@ export class SimulationClock implements ISimulationClock {
 
   // Array (memória do processo) com os dias UTC já utilizados como "dia produtivo".
   // Isso evita que reinícios no mesmo dia UTC voltem a simular o mesmo dia.
-  private static simulatedDays: string[] = [];
+  private static simulatedDays: Set<string> = new Set();
 
   private shops: Map<string, IShop>;
   private stops: Map<string, IStopLine>;
@@ -42,7 +42,18 @@ export class SimulationClock implements ISimulationClock {
     this.emitter.setMaxListeners(100);
     this._speedFactor = speedFactor;
     this.callbacks = callbacks;
-    this._simulatedTimestamp = this.createInitialTimestamp();
+    // Não "consome" um dia produtivo no construtor. O dia é reservado somente
+    // quando a simulação começa de fato (start/restart).
+    const now = new Date();
+    this._simulatedTimestamp = Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      this.START_HOUR,
+      this.START_MINUTE,
+      0,
+      0
+    );
     const factory = new PlantFactory();
     this.shops = factory.createAllShops();
     const bufferFactory = new BufferFactory();
@@ -62,18 +73,18 @@ export class SimulationClock implements ISimulationClock {
 
     const formatUtcDayKey = (d: Date): string => {
       const year = d.getUTCFullYear();
-      const month = (d.getUTCMonth() + 1).toString().padStart(2, '0');
-      const day = d.getUTCDate().toString().padStart(2, '0');
+      const month = (d.getUTCMonth() + 1).toString().padStart(2, "0");
+      const day = d.getUTCDate().toString().padStart(2, "0");
       return `${year}-${month}-${day}`;
     };
 
     let dayKey = formatUtcDayKey(candidateDate);
-    while (SimulationClock.simulatedDays.includes(dayKey)) {
+    while (SimulationClock.simulatedDays.has(dayKey)) {
       candidateDate.setUTCDate(candidateDate.getUTCDate() + 1);
       dayKey = formatUtcDayKey(candidateDate);
     }
 
-    SimulationClock.simulatedDays.push(dayKey);
+    SimulationClock.simulatedDays.add(dayKey);
 
     return Date.UTC(
       candidateDate.getUTCFullYear(),
