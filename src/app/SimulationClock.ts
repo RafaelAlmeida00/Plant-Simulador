@@ -24,6 +24,11 @@ export class SimulationClock implements ISimulationClock {
   private readonly BASE_TICK_INTERVAL_MS = 1000;
   private readonly START_HOUR = 7;
   private readonly START_MINUTE = 0;
+
+  // Array (memória do processo) com os dias UTC já utilizados como "dia produtivo".
+  // Isso evita que reinícios no mesmo dia UTC voltem a simular o mesmo dia.
+  private static simulatedDays: string[] = [];
+
   private shops: Map<string, IShop>;
   private stops: Map<string, IStopLine>;
   private buffers: Map<string, IBuffer>;
@@ -51,7 +56,34 @@ export class SimulationClock implements ISimulationClock {
   private createInitialTimestamp(): number {
     const now = new Date();
     // Usa UTC para garantir consistência entre servidores com diferentes timezones
-    return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), this.START_HOUR, this.START_MINUTE, 0, 0);
+    // e avança o "dia produtivo" se o dia UTC atual já tiver sido usado.
+
+    const candidateDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+
+    const formatUtcDayKey = (d: Date): string => {
+      const year = d.getUTCFullYear();
+      const month = (d.getUTCMonth() + 1).toString().padStart(2, '0');
+      const day = d.getUTCDate().toString().padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    let dayKey = formatUtcDayKey(candidateDate);
+    while (SimulationClock.simulatedDays.includes(dayKey)) {
+      candidateDate.setUTCDate(candidateDate.getUTCDate() + 1);
+      dayKey = formatUtcDayKey(candidateDate);
+    }
+
+    SimulationClock.simulatedDays.push(dayKey);
+
+    return Date.UTC(
+      candidateDate.getUTCFullYear(),
+      candidateDate.getUTCMonth(),
+      candidateDate.getUTCDate(),
+      this.START_HOUR,
+      this.START_MINUTE,
+      0,
+      0
+    );
   }
 
   get state(): ClockState {
