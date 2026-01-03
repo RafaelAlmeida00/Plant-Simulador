@@ -1152,11 +1152,12 @@ export class SimulationFlow {
         // Skip if no car in station - can't have LACK stop without a car present
         if (!car) return true;
 
-        // Skip if car is a part (parts don't consume other parts)
-        if (car.isPart) return true;
-
         // Skip if line has no required parts
         if (!line.requiredParts || line.requiredParts.length === 0) return true;
+
+        // Skip if car is a part AND line has no requiredParts
+        // (parts CAN consume other parts if the line explicitly requires them)
+        if (car.isPart && (!line.requiredParts || line.requiredParts.length === 0)) return true;
 
         // Check if this is the consumption station for any required part
         const consumptionStation = line.partConsumptionStation || "s1";
