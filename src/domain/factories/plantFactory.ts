@@ -21,11 +21,12 @@ export async function loadDefaultPlantConfig(): Promise<IFlowPlant> {
     try {
         const repository = new ConfigPlantRepository();
         const defaultConfig = await repository.getDefault();
-        
+        console.log(`[PlantFactory] Loaded default configuration from database: "${defaultConfig}"`);
+
         if (defaultConfig && defaultConfig.config) {
             try {
                 const parsedConfig = JSON.parse(defaultConfig.config) as IFlowPlant;
-                
+
                 // Valida se o config tem a estrutura mínima esperada
                 if (parsedConfig && parsedConfig.shops && Object.keys(parsedConfig.shops).length > 0) {
                     console.log(`[PlantFactory] Loaded plant configuration from database: "${defaultConfig.name}"`);
@@ -46,7 +47,7 @@ export async function loadDefaultPlantConfig(): Promise<IFlowPlant> {
         console.error('[PlantFactory] Error fetching config from database:', dbError);
         console.warn('[PlantFactory] Falling back to default FlowPlant');
     }
-    
+
     // Fallback para FlowPlant
     activeFlowPlant = FlowPlant;
     flowPlantShopKeys = Object.keys(FlowPlant.shops);
@@ -190,7 +191,7 @@ export class PlantFactory {
         return new Shop({
             name: shopName,
             lines: linesMap,
-            bufferCapacity: shopConfig.bufferCapacity ?? 0, 
+            bufferCapacity: shopConfig.bufferCapacity ?? 0,
             reworkBuffer: shopConfig.reworkBuffer ?? 0,
         });
     }

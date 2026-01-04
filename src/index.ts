@@ -3,6 +3,7 @@ import { SimulationFactory } from "./domain/factories/SimulationFactory";
 import { simulationEventEmitter } from "./adapters/http/websocket/SimulationEventEmitter";
 import { socketServer } from "./adapters/http/websocket/SocketServer";
 import { DatabaseFactory } from "./adapters/database/DatabaseFactory";
+import { loadDefaultPlantConfig } from "./domain/factories/plantFactory";
 
 const serverStartTime = Date.now();
 
@@ -58,6 +59,9 @@ export async function StartSimulation() {
     // Garante que o banco esteja conectado e com tabelas criadas antes de iniciar
     // qualquer tick/persistência/evento da simulação.
     await DatabaseFactory.getDatabase();
+
+    // Carrega configuração da planta do banco de dados (ou usa FlowPlant como fallback)
+    await loadDefaultPlantConfig();
 
     const simulation = SimulationFactory.create({
         onTick: (event, state) => {

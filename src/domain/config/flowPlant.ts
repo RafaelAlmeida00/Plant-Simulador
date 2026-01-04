@@ -63,7 +63,7 @@ import { IFlowPlant } from "../../utils/shared";
  * ============================================================================
  */
 
-export const FlowPlant: IFlowPlant = {
+export const FlowPlant: any = {
 
   typeSpeedFactor: 1,
   stationTaktMinFraction: 0.7,
