@@ -6,6 +6,54 @@ import { DatabaseFactory } from "./adapters/database/DatabaseFactory";
 
 const serverStartTime = Date.now();
 
+const MEMORY_LOG_INTERVAL_MS = 30_000;
+let memoryLogInterval: NodeJS.Timeout | undefined;
+
+function bytesToMiB(bytes: number): number {
+    return bytes / 1024 / 1024;
+}
+
+function logMemoryUsage(reason: string): void {
+    const mem = process.memoryUsage();
+    const uptimeMs = Date.now() - serverStartTime;
+
+    console.log(
+        `[MEM] reason=${reason} uptimeMs=${uptimeMs} ` +
+        `rssMiB=${bytesToMiB(mem.rss).toFixed(1)} ` +
+        `heapUsedMiB=${bytesToMiB(mem.heapUsed).toFixed(1)} ` +
+        `heapTotalMiB=${bytesToMiB(mem.heapTotal).toFixed(1)} ` +
+        `externalMiB=${bytesToMiB(mem.external).toFixed(1)} ` +
+        `arrayBuffersMiB=${bytesToMiB(mem.arrayBuffers).toFixed(1)}`
+    );
+}
+
+function startMemoryLogging(): void {
+    if (memoryLogInterval) return;
+
+    logMemoryUsage('startup');
+    memoryLogInterval = setInterval(() => {
+        logMemoryUsage('interval');
+    }, MEMORY_LOG_INTERVAL_MS);
+}
+
+function stopMemoryLogging(): void {
+    if (!memoryLogInterval) return;
+    clearInterval(memoryLogInterval);
+    memoryLogInterval = undefined;
+}
+
+process.on('SIGTERM', () => {
+    console.log('[SIGNAL] SIGTERM received. Logging memory snapshot and shutting down.');
+    logMemoryUsage('SIGTERM');
+    stopMemoryLogging();
+
+    // Since we added a SIGTERM handler, Node will not exit by default.
+    // Give stdout a brief moment to flush.
+    setTimeout(() => {
+        process.exit(0);
+    }, 250);
+});
+
 export async function StartSimulation() {
     // Garante que o banco esteja conectado e com tabelas criadas antes de iniciar
     // qualquer tick/persistência/evento da simulação.
@@ -83,6 +131,8 @@ export async function StartSimulation() {
 }
 
 async function main(): Promise<void> {
+    startMemoryLogging();
+
     // Primeiro processo do boot: banco (inclui criação de tabelas via connect()).
     await DatabaseFactory.getDatabase();
 
